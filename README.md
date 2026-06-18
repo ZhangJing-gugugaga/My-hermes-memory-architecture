@@ -1,18 +1,18 @@
-# Hierarchical Rule-Indexed Memory Architecture for LLM-Based Autonomous Agents
+# HIMRA: Hierarchical Indexed Memory Retrieval Architecture for LLM-Based Autonomous Agents
 
-**A Context-Aware, Multi-Layer Memory System for Persistent Agent Memory Management**
+**A Hybrid Rule-Semantic Memory System with Knowledge Graph Integration**
 
 ---
 
 ## Abstract
 
-Current LLM-based autonomous agents, such as Hermes Agent, employ a flat memory architecture where all persistent knowledge is stored in a single monolithic file and injected into every conversation turn. This approach suffers from three critical deficiencies: (1) **memory pollution** — irrelevant historical memories degrade current task performance; (2) **capacity constraints** — fixed character limits (e.g., 2,200 characters) impose a hard ceiling on knowledge retention; (3) **context inefficiency** — full-memory injection wastes valuable context window budget on irrelevant information.
+Current LLM-based autonomous agents employ flat memory architectures where all persistent knowledge is stored in a single file and injected into every conversation turn. This causes **memory pollution**, **capacity constraints**, and **context inefficiency**.
 
-This paper proposes **HIMRA** (Hierarchical Indexed Memory Retrieval Architecture), a rule-driven, directory-structured memory system that transforms the memory store from a flat file into a hierarchical knowledge base with explicit retrieval rules, update policies, and lifecycle management. The core insight is to repurpose the constrained memory file (MEMORY.md) as a **memory router** — a lightweight rule engine that governs how external, unlimited-capacity memory files are selectively loaded based on conversational context.
+This paper proposes **HIMRA**, a hybrid memory system combining three retrieval paradigms — **rule-based routing**, **semantic vector search**, and **knowledge graph traversal** — within a hierarchical directory structure. The core insight is to transform the constrained memory file from a storage container into a **multi-stage retrieval router**.
 
-We present the architectural design, formal specification of the memory routing protocol, retrieval and update algorithms, and a concrete implementation strategy for deployment within the Hermes Agent ecosystem. Preliminary analysis suggests this approach can achieve 3-10× effective memory capacity while reducing context pollution by approximately 60-80% compared to flat-memory baselines.
+Drawing on RAG and RAG-Anything (HKUDS 2025), we present an architecture that is explainable, resource-efficient (2GB RAM), and incrementally deployable.
 
-**Keywords:** autonomous agents, memory management, context engineering, hierarchical retrieval, LLM agent architecture
+**Keywords:** autonomous agents, memory management, RAG, knowledge graph, context engineering
 
 ---
 
@@ -20,830 +20,404 @@ We present the architectural design, formal specification of the memory routing 
 
 ### 1.1 Background
 
-The emergence of LLM-based autonomous agents has created new demands for persistent memory systems that extend beyond individual conversation sessions. Agents like Hermes Agent (Nous Research), Claude Code (Anthropic), and OpenClaw require memory of user preferences, project context, technical decisions, and operational history to function effectively across sessions.
+LLM-based autonomous agents (Hermes Agent, Claude Code, OpenClaw) require persistent memory across sessions. Current implementations use flat files (limited) or vector databases (resource-intensive). Neither satisfies scalability + explainability + resource efficiency simultaneously.
 
 ### 1.2 The Memory Problem
 
-Contemporary agent memory systems typically fall into two categories:
+| Approach | Example | Strength | Fatal Weakness |
+|----------|---------|----------|----------------|
+| Flat file | Hermes MEMORY.md | Simple, deterministic | 2,200-char ceiling |
+| Vector DB | Hindsight/Mem0 | Unlimited, semantic | 1-2GB RAM, opaque |
+| Knowledge graph | RAG-Anything | Rich relationships | Heavy, designed for documents |
 
-| Approach | Example | Mechanism | Limitation |
-|----------|---------|-----------|------------|
-| **Flat file** | Hermes built-in MEMORY.md | Single file, full injection | Capacity ceiling, pollution |
-| **Vector database** | Hindsight, Mem0, Honcho | Embedding-based semantic search | Resource-intensive, opaque retrieval |
+### 1.3 Research Questions
 
-The flat-file approach, while simple and deterministic, fundamentally cannot scale. When MEMORY.md reaches its character limit (typically 2,200–5,000 characters), the agent must choose between retaining old knowledge and recording new knowledge — an impossible tradeoff for long-lived agents.
+> **RQ1:** Can a hierarchical directory structure with routing rules replace flat-file memory within the existing character budget?
+>
+> **RQ2:** Can rule-based, semantic, and graph retrieval be combined into a unified pipeline?
+>
+> **RQ3:** Can this operate within 2GB RAM without external databases?
 
-The vector-database approach addresses capacity but introduces new problems: high resource requirements (PostgreSQL + pgvector + embedding models consume 1-2GB RAM), opaque retrieval semantics (the agent cannot explain *why* a particular memory was recalled), and dependency on external infrastructure.
+### 1.4 Architecture Evolution
 
-### 1.3 Research Question
+```
+Stage 1: Rule-Based Router (HIMRA v1)
+  Solution: Directory structure + keyword triggers
+  Limitation: Synonym blindness
 
-> **Can we design a memory system that (a) exceeds the capacity limits of flat-file memory, (b) provides deterministic, explainable retrieval, (c) operates within the resource constraints of a 2GB RAM server, and (d) requires no external database or embedding infrastructure?**
+         + entity extraction
 
-### 1.4 Contribution
+Stage 2: Entity-Enhanced (HIMRA v2)
+  Solution: LLM-extracted entity index
+  Limitation: No relationship awareness
 
-This paper presents HIMRA, a memory architecture that achieves all four objectives by reconceptualizing the memory file as a **routing specification** rather than a **storage container**. The key contributions are:
+         + knowledge graph + semantic search
 
-1. A formal specification of rule-indexed memory retrieval
-2. A memory lifecycle protocol with automatic update, consolidation, and archival
-3. A concrete implementation design compatible with Hermes Agent's existing infrastructure
-4. Analysis of tradeoffs between rule-based and semantic-based memory retrieval
+Stage 3: Graph-Enhanced Hybrid (HIMRA v3)
+  Solution: Entity graph + embedding fallback
+  Inspired by: RAG-Anything (HKUDS, 2025)
+```
 
 ---
 
 ## 2. Problem Analysis
 
-### 2.1 Anatomy of Current Memory Systems
+### 2.1 Flat Memory Anatomy
 
-Hermes Agent's built-in memory system operates as follows:
-
-```
-┌─────────────────────────────────────────────────┐
-│                  System Prompt                   │
-│                                                  │
-│  ┌──────────────────────────────────────────┐   │
-│  │  MEMORY.md (≤2200 chars)                 │   │
-│  │  - User preferences                      │   │
-│  │  - Environment facts                     │   │
-│  │  - Project conventions                   │   │
-│  │  - Tool quirks                           │   │
-│  │  - Operational lessons                   │   │
-│  │  ← ALL injected EVERY turn               │   │
-│  └──────────────────────────────────────────┘   │
-│                                                  │
-│  ┌──────────────────────────────────────────┐   │
-│  │  USER.md (≤1375 chars)                   │   │
-│  │  - User identity                         │   │
-│  │  - Communication style                   │   │
-│  │  ← ALL injected EVERY turn               │   │
-│  └──────────────────────────────────────────┘   │
-│                                                  │
-│  + Conversation history                          │
-│  + Tool definitions                              │
-│  + Skill contents                                │
-└─────────────────────────────────────────────────┘
-         │
-         ▼
-    LLM Inference
-```
+Every turn, Hermes injects ALL of MEMORY.md (2200 chars) + USER.md (1375 chars) regardless of topic. When discussing servers, memories about Obsidian and coding style waste ~70% of budget.
 
 ### 2.2 Failure Modes
 
-**Memory Pollution (Type I):** Irrelevant memories from previous domains are injected into current context. Example: discussing server deployment while memories about Obsidian knowledge base structure consume context budget.
+- **Type I - Pollution:** Irrelevant memories degrade performance
+- **Type II - Starvation:** Character limit forces eviction of valuable knowledge
+- **Type III - Collision:** Multiple facts compressed, losing precision
+- **Type IV - Staleness:** Outdated info persists
 
-**Memory Starvation (Type II):** The character limit forces eviction of valuable knowledge. A user who has worked with an agent for months will find that early configuration details have been overwritten by more recent entries.
+### 2.3 Numbers
 
-**Memory Collision (Type III):** Multiple unrelated facts are compressed into abbreviated entries to fit within limits, losing nuance and precision. Example: `"阿里云 ECS：2核2G，北京区，3Mbps"` — this omits security group rules, swap configuration, systemd service details, and deployment history.
-
-**Memory Staleness (Type IV):** Without temporal awareness, outdated information persists. Example: server OS was upgraded from Ubuntu 22.04 to 26.04, but the old version persists in memory.
-
-### 2.3 Quantitative Analysis
-
-Given a typical MEMORY.md of 2,200 characters and an average knowledge entry of 150 characters:
-
-- **Maximum entries:** ~14 independent facts
-- **At 2 entries/day growth rate:** Memory saturates in ~1 week
-- **Context waste ratio:** When discussing topic X, memories about topics Y, Z, W consume ~70% of the memory budget
+| Metric | Value |
+|--------|-------|
+| Capacity | 2,200 chars |
+| Max entries | ~14 facts |
+| Saturation time | ~7 days |
+| Context waste | ~70% |
 
 ---
 
-## 3. Proposed Architecture: HIMRA
+## 3. Design Principles
 
-### 3.1 Design Philosophy
+### 3.1 Separation of Routing and Storage
 
-HIMRA is founded on three principles:
+The router (MEMORY.md, 2200 chars) = rules + paths. The store (external files) = actual knowledge, unlimited.
 
-1. **Separation of Concerns:** Memory *routing logic* is separate from memory *content storage*
-2. **Lazy Loading:** Only contextually relevant memories are loaded into the conversation
-3. **Bounded Core, Unbounded Periphery:** The router (MEMORY.md) is bounded; the storage (external files) is unbounded
+### 3.2 Lazy Loading
 
-### 3.2 System Architecture
+Only relevant memories loaded. Four-stage pipeline determines relevance.
+
+### 3.3 Bounded Core, Unbounded Periphery
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                        System Prompt                          │
-│                                                               │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │  MEMORY.md (≤2200 chars) — "Memory Router"             │  │
-│  │                                                        │  │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐  │  │
-│  │  │ Retrieval   │  │ Update      │  │ Lifecycle    │  │  │
-│  │  │ Rules       │  │ Rules       │  │ Rules        │  │  │
-│  │  │ (~1500 ch)  │  │ (~400 ch)   │  │ (~200 ch)    │  │  │
-│  │  └─────────────┘  └─────────────┘  └──────────────┘  │  │
-│  │  ┌─────────────────────────────────────────────────┐  │  │
-│  │  │ Path Index + Quick Reference (~100 ch)          │  │  │
-│  │  └─────────────────────────────────────────────────┘  │  │
-│  └────────────────────────────────────────────────────────┘  │
-│                                                               │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │  USER.md — User Profile (compact, always loaded)       │  │
-│  └────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
-         │
-         │  Retrieval Rules trigger selective loading
-         ▼
-┌──────────────────────────────────────────────────────────────┐
-│              External Memory Directory                        │
-│              ~/.hermes/memory/                                │
-│                                                               │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │  user/       │  │  context/    │  │  lessons/    │       │
-│  │              │  │              │  │              │       │
-│  │  profile.md  │  │  server.md   │  │  corrections│       │
-│  │  (always     │  │  feishu.md   │  │  .md         │       │
-│  │   loaded)    │  │  hermes.md   │  │  discoveries │       │
-│  │              │  │  obsidian.md │  │  .md         │       │
-│  │              │  │  deploy.md   │  │  failures.md │       │
-│  └──────────────┘  └──────────────┘  └──────────────┘       │
-│                                                               │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │  index.md — Full catalog with summaries & triggers   │    │
-│  └──────────────────────────────────────────────────────┘    │
-│                                                               │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │  archive/ — Deprecated memories (retained, not loaded)│   │
-│  └──────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────┘
-         │
-         │  Selective injection based on rules
-         ▼
-┌──────────────────────────────────────────────────────────────┐
-│                    LLM Context Window                         │
-│                                                               │
-│  System Prompt + MEMORY.md (router) + USER.md                 │
-│  + MATCHED context/*.md + MATCHED lessons/*.md                │
-│  + Conversation history                                       │
-│  + Tool definitions                                           │
-│                                                               │
-│  ← Only relevant memories injected                           │
-└──────────────────────────────────────────────────────────────┘
+Bounded (2200 chars):           Unlimited:
++---------------------+         +---------------------------+
+|  MEMORY.md          |         |  memory/                  |
+|  (rules + paths)    |-------->|  user/ context/ lessons/  |
++---------------------+         |  .entities/ .embeddings/  |
+  "The card catalog"            +---------------------------+
+                                  "The library stacks"
 ```
 
-### 3.3 Formal Model
+### 3.4 Explainable Retrieval
 
-Let $\mathcal{M} = \{m_1, m_2, \ldots, m_n\}$ be the set of all memory files.
+Every injection justified: "Loaded because SSH matches trigger in context/server.md"
 
-Each memory file $m_i$ is defined as a tuple:
+### 3.5 Graceful Degradation
 
-$$m_i = (C_i, T_i, A_i, P_i, \tau_i)$$
-
-Where:
-- $C_i$ = content (the actual knowledge)
-- $T_i = \{t_1, t_2, \ldots, t_k\}$ = trigger keywords
-- $A_i \in \{\text{always}, \text{on\_trigger}, \text{on\_semantic}\}$ = activation mode
-- $P_i \in \{\text{high}, \text{medium}, \text{low}\}$ = priority
-- $\tau_i$ = timestamp of last access
-
-For a given user message $q$ at time $t$, the retrieval function $R$ selects the set of memories to inject:
-
-$$R(q, t) = \{m_i \in \mathcal{M} \mid A_i = \text{always}\} \cup \{m_i \in \mathcal{M} \mid A_i = \text{trigger} \cap T_i \cap \text{keywords}(q) \neq \emptyset\}$$
-
-The injected context is then:
-
-$$\text{context}(q) = \text{sort}(R(q, t), \text{by}=P_i) \quad \text{s.t.} \quad \sum |C_i| \leq B$$
-
-Where $B$ is the effective memory budget (derived from the model's context window minus system prompt, tools, and conversation history).
+Works at three levels. Embedding unavailable -> rules only. Entity index corrupted -> keywords only. Never fails completely.
 
 ---
 
-## 4. Memory File Specification
+## 4. Architecture Overview
 
-### 4.1 File Format
+Five components:
 
-Every memory file follows a standardized format with YAML frontmatter:
-
-```markdown
----
-name: server-configuration
-triggers: [服务器, ECS, SSH, 安全组, swap, systemd, gateway, 部署]
-always_load: false
-priority: medium
-updated: 2026-06-18
-summary: 阿里云 ECS 服务器配置详情和部署历史
-version: 3
----
-
-# Server Configuration
-
-## Hardware
-- Instance: ecs.e-c1m1.large (2 vCPU, 2 GiB RAM)
-- Disk: 70 GiB ESSD Entry
-- Bandwidth: 3 Mbps
-- Region: cn-beijing
-
-## OS & Runtime
-- Ubuntu 26.04
-- Python 3.14.4
-- Swap: 2GB /swapfile (swappiness=10)
-
-## Network
-- Public IP: 123.57.30.132
-- Security Group: sg-2ze51hqumpkegzfdy576
-- Allowed: ICMP, HTTP(80), HTTPS(443), SSH(22)
-
-## Services
-- Hermes Agent v0.10.0 at /opt/hermes-agent/
-- hermes-gateway.service (systemd)
-- EnvironmentFile=-/root/.hermes/.env
-
-## Deployment History
-- 2026-03-18: Instance created
-- 2026-06-18: OS upgraded to 26.04, disk expanded to 70GB
-- 2026-06-18: Security group cleaned, swap added, gateway configured
+```
++----------------------------------------------------------+
+| Component          | Role                                 |
+|--------------------|--------------------------------------|
+| 1. Memory Store    | *.md files with YAML frontmatter     |
+| 2. Entity Index    | entity -> file mapping (JSON)        |
+| 3. Vector Index    | FAISS embeddings (optional)          |
+| 4. Graph Index     | entity relationships (JSON)          |
+| 5. Retrieval Router| MEMORY.md rules (always loaded)      |
++----------------------------------------------------------+
 ```
 
-### 4.2 Directory Taxonomy
+### Component 1: Memory Store
 
 ```
 memory/
-├── user/                    # User identity and preferences
-│   ├── profile.md           # Core identity (name, role, habits)
-│   └── communication.md     # Communication style preferences
-│
-├── context/                 # Project and environment context
-│   ├── server.md            # Server configuration
-│   ├── feishu.md            # Feishu integration details
-│   ├── hermes-local.md      # Local Hermes setup
-│   ├── obsidian.md          # Knowledge base structure
-│   └── automation.md        # Cron jobs and automation
-│
-├── lessons/                 # Accumulated knowledge
-│   ├── corrections.md       # User corrections and fixes
-│   ├── discoveries.md       # New tools, methods, insights
-│   ├── failures.md          # What went wrong and why
-│   └── patterns.md          # Recurring patterns and solutions
-│
-├── index.md                 # Full catalog (titles, paths, triggers, summaries)
-└── archive/                 # Deprecated memories (90+ days inactive)
-    ├── 2026-Q1/
-    └── 2026-Q2/
++-- user/profile.md           # Who the user is (always loaded)
++-- context/server.md         # ECS config, SSH, security groups
++-- context/feishu.md         # Feishu integration details
++-- lessons/corrections.md    # User corrections
++-- lessons/discoveries.md    # New tools/methods
++-- index.md                  # Full catalog
 ```
 
-### 4.3 Category Definitions
-
-| Category | Purpose | Update Frequency | Retention |
-|----------|---------|-----------------|-----------|
-| `user/` | Who the user is, how they work | Low (stable traits) | Permanent |
-| `context/` | Current state of projects and tools | Medium (on change) | Until superseded |
-| `lessons/` | What worked, what didn't | High (every session) | Rolling window |
-| `archive/` | Historical records | Never (frozen) | Indefinite |
-
----
-
-## 5. Retrieval Mechanism
-
-### 5.1 Multi-Stage Retrieval Pipeline
-
-The retrieval process operates in three stages:
-
-```
-User Message q
-      │
-      ▼
-┌─────────────┐
-│  Stage 1:   │  Load always-on memories
-│  Baseline   │  → user/profile.md
-│  Loading    │  → index.md (headers only)
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  Stage 2:   │  Extract keywords from q
-│  Keyword    │  Match against triggers in MEMORY.md rules
-│  Matching   │  → Load matched context/*.md files
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  Stage 3:   │  If no keyword match AND conversation is complex
-│  Index      │  → Scan index.md for semantic relevance
-│  Scanning   │  → Load best-matching files
-└──────┬──────┘
-       │
-       ▼
-  Injected Context
-  (sorted by priority, bounded by budget B)
-```
-
-### 5.2 Keyword Extraction
-
-For the keyword matching stage (Stage 2), we employ a deterministic, zero-cost approach:
-
-1. **Tokenization:** Split user message into tokens (whitespace + punctuation)
-2. **Normalization:** Lowercase, strip punctuation
-3. **Matching:** For each memory file's trigger set $T_i$, compute intersection with normalized tokens
-4. **Threshold:** Load file if $|T_i \cap \text{tokens}(q)| \geq 1$
-
-This approach is intentionally simple — it prioritizes determinism and zero latency over recall precision. The trigger list serves as an explicit, human-readable mapping of domain vocabulary.
-
-### 5.3 Handling Synonyms and Polysemy
-
-A known limitation of keyword-based retrieval is synonym blindness ("server" ≠ "服务器"). HIMRA addresses this through **exhaustive trigger enumeration**:
+Each file has frontmatter:
 
 ```yaml
-triggers: [服务器, ECS, server, Server, 云服务器, 阿里云, Aliyun, 
-           安全组, security group, firewall, 防火墙, SSH, 端口, port]
+name: server-configuration
+triggers: [server, ECS, SSH, security-group, swap, aliyun]
+entities: [123.57.30.132, ecs.e-c1m1.large, Ubuntu 26.04]
+always_load: false
+priority: medium
+updated: 2026-06-18
 ```
 
-This trades storage space (longer trigger lists) for retrieval precision. In practice, each domain has a bounded vocabulary (typically 10-20 synonyms), making this approach viable.
+**Key fields:**
+- `triggers` — keywords for rule-based retrieval (Stage 1)
+- `entities` — extracted concepts for entity matching (Stage 2, auto-generated)
+- `priority` — loading priority when multiple files match
+- `always_load` — if true, injected every turn (only user/profile.md)
 
-### 5.4 Priority Resolution
+### Component 2: Entity Index
 
-When multiple memory files match a query, they are injected in priority order:
+Maps entities to source files. Auto-generated by LLM when files are created/updated.
 
-| Priority | Category | Rationale |
-|----------|----------|-----------|
-| High | User identity, active project context | Immediate relevance to any interaction |
-| Medium | Technical configurations, tool details | Relevant to specific tasks |
-| Low | Historical lessons, archived patterns | Background knowledge |
+```json
+{
+  "123.57.30.132": ["context/server.md"],
+  "Ubuntu 26.04":  ["context/server.md"],
+  "feishu":        ["context/feishu.md"],
+  "paramiko":      ["lessons/discoveries.md"]
+}
+```
 
-If total matched content exceeds budget $B$, lower-priority files are truncated or omitted.
+**Why this matters:** Catches synonyms automatically. "server", "ECS", "server", "aliyun" all map to server.md without manual enumeration. This solves the biggest limitation of pure keyword-based retrieval.
+
+### Component 3: Vector Index (Optional)
+
+FAISS + BGE-small-en-v1.5 (384-dim). Only activates when rules + entities produce < 2 matches. ~150MB RAM.
+
+```
+.embeddings/
++-- index.faiss          # Vector index
++-- metadata.json        # vector_id -> (file, chunk, timestamp)
++-- config.json          # model, dimension, chunk params
+```
+
+### Component 4: Graph Index
+
+Entity relationships for cross-topic navigation:
+
+```
+"ECS Server" --[runs]--> "hermes-gateway"
+"hermes-gateway" --[depends_on]--> "lark-oapi"
+"lark-oapi" --[installed_on]--> "123.57.30.132"
+```
+
+When user asks about "server", graph reveals that "hermes-gateway" and "lark-oapi" are related. System can auto-load context/feishu.md as supplementary context.
+
+Stored as simple JSON (~10MB RAM). No Neo4j needed.
+
+### Component 5: Retrieval Router (MEMORY.md)
+
+The 2200-char rule file that orchestrates the four-stage pipeline. Always loaded into LLM context.
 
 ---
 
-## 6. Update Mechanism
-
-### 6.1 Trigger Conditions
-
-New memories are written when:
-
-| Trigger | Target File | Example |
-|---------|-------------|---------|
-| User explicitly says "记住" | Determined by content domain | "记住我的服务器密码是..." |
-| User corrects an error | `lessons/corrections.md` | "不是 Ubuntu 22.04，是 26.04" |
-| Configuration change detected | `context/*.md` | Security group rules modified |
-| Task failure | `lessons/failures.md` | Gateway crash due to missing env |
-| New tool/method discovered | `lessons/discoveries.md` | Found paramiko for SSH |
-
-### 6.2 Update Protocol
+## 5. Four-Stage Retrieval Pipeline
 
 ```
-Event e detected
-      │
-      ▼
-┌─────────────────┐
-│  Classify event │  → Determine target category
-│  into domain    │  → Select or create target file
-└──────┬──────────┘
-       │
-       ▼
-┌─────────────────┐
-│  Check if entry │  → If exists: update in place
-│  already exists │  → If new: append with timestamp
-└──────┬──────────┘
-       │
-       ▼
-┌─────────────────┐
-│  Update YAML    │  → Refresh `updated` timestamp
-│  frontmatter    │  → Update `triggers` if new keywords
-└──────┬──────────┘  → Increment `version`
-       │
-       ▼
-┌─────────────────┐
-│  Update index   │  → Add/modify entry in index.md
-│  if needed      │
-└─────────────────┘
+User Query: "my server swap config?"
+                |
+    +-----------+-----------+
+    | Stage 1: Rule Match   | "server" + "swap" -> server.md
+    | Stage 2: Entity Match | [server, swap] -> server.md (dup)
+    | Stage 3: Semantic     | Skip (>=2 matches)
+    | Stage 4: Graph        | server -> hermes-gateway (no new files)
+    +-----------+-----------+
+                |
+                v
+    Injected: user/profile.md + context/server.md
 ```
 
-### 6.3 Consolidation Rules
+| Stage | Method | Cost | Handles |
+|-------|--------|------|---------|
+| 1. Rules | Keyword matching | Free | Common vocabulary |
+| 2. Entities | Index lookup | Free | Synonyms, technical terms |
+| 3. Semantic | Embedding similarity | ~50ms | Novel phrasings |
+| 4. Graph | Relationship traversal | ~10ms | Cross-topic links |
 
-To prevent unbounded growth within individual files:
+### Scoring
 
-- **context/*.md**: Overwrite mode — always reflect current state. Historical changes logged in a `## Change Log` section at the bottom.
-- **lessons/*.md**: Append mode — new entries added chronologically. Periodic consolidation merges related entries.
-- **user/profile.md**: Overwrite mode — profile reflects current understanding.
+Score(f) = alpha * [rule match] + beta * [entity match] + gamma * sim(q,f) + delta * graph(f)
+
+Where alpha > beta > gamma > delta (deterministic weighted higher).
+
+### Fallback
+
+If nothing matches -> load index.md (catalog) -> LLM browses and requests files.
 
 ---
 
-## 7. Lifecycle Management
+## 6. Memory Lifecycle
 
-### 7.1 Aging Policy
+### Update Triggers
 
-| Age | State | Action |
-|-----|-------|--------|
-| 0-30 days | Active | Normal retrieval |
-| 30-90 days | Stale | Retrieved only on exact keyword match |
-| 90+ days | Archive | Moved to `archive/`, excluded from retrieval |
-| On supersession | Deprecated | Replaced by newer entry, old version archived |
+| Event | Target | Action |
+|-------|--------|--------|
+| User says "remember" | Domain file | Write |
+| Correction | lessons/corrections.md | Append |
+| Config change | context/*.md | Overwrite |
+| Task failure | lessons/failures.md | Append |
 
-### 7.2 Garbage Collection
+### Entity Maintenance
 
-A periodic maintenance cycle (recommended: monthly) performs:
+On file update: re-extract entities -> update index -> update graph -> re-embed (if vector index active).
 
-1. **Dead link check:** Verify all files referenced in index.md exist
-2. **Stale entry detection:** Flag files with `updated` > 90 days ago
-3. **Duplicate detection:** Identify entries with overlapping triggers and content
-4. **Size audit:** Ensure MEMORY.md remains within character limit
-5. **Trigger optimization:** Add triggers for recently-missed queries
+### Aging
 
-### 7.3 Self-Healing
+- 0-30 days: Active (full retrieval)
+- 30-90 days: Stale (exact match only)
+- 90+ days: Archive (excluded)
 
-The memory system includes a self-healing mechanism: when the agent detects that its memory was insufficient for a task (e.g., it had to ask the user for information it should have known), it writes a corrective entry:
+### Self-Healing
 
-```markdown
-## [2026-06-18] Memory Gap: Server OS Version
-- **What happened:** Agent stated server runs Ubuntu 22.04
-- **Reality:** Server was upgraded to Ubuntu 26.04
-- **Root cause:** context/server.md not updated after OS upgrade
-- **Fix:** Updated context/server.md, added "Ubuntu 26.04" to triggers
-```
+Agent detects memory gaps and writes corrective entries with root cause analysis.
 
 ---
 
-## 8. MEMORY.md Specification (The Router)
+## 7. MEMORY.md Specification
 
-### 8.1 Character Budget Allocation
+### Budget Allocation (2200 chars)
 
-Given a 2,200-character limit:
-
-| Section | Budget | Purpose |
+| Section | Budget | Content |
 |---------|--------|---------|
-| Retrieval Rules | ~1,400 chars (64%) | Keyword → file mapping |
-| Update Rules | ~350 chars (16%) | When and how to write |
-| Lifecycle Rules | ~200 chars (9%) | Aging, cleanup, archival |
-| Path Index | ~150 chars (7%) | Directory structure reference |
-| Metadata | ~100 chars (4%) | Version, last audit date |
+| Retrieval rules | ~1200 (55%) | Keywords, entity triggers |
+| Update rules | ~300 (14%) | Write triggers and format |
+| Lifecycle rules | ~200 (9%) | Aging, archival |
+| Pipeline config | ~200 (9%) | Stage weights, thresholds |
+| Path index | ~200 (9%) | Directory structure |
+| Metadata | ~100 (4%) | Version, audit date |
 
-### 8.2 Reference Template
+### Reference Template
 
-```markdown
-# Memory Router v1.0 | Last audit: 2026-06-18
+```
+# Memory Router v3.0
 
 ## Paths
-user/ = 用户画像 | context/ = 项目上下文 | lessons/ = 经验教训
-index.md = 全量索引 | archive/ = 归档
+user/ = user profile | context/ = project context | lessons/ = accumulated knowledge
+index.md = full catalog | .entities/ = entity index | .embeddings/ = vector index
 
-## Retrieval
-始终加载: user/profile.md
-关键词触发:
-- 服务器|ECS|SSH|安全组|swap|systemd → context/server.md
-- 飞书|feishu|lark|bot|gateway → context/feishu.md
-- Hermes|配置|config|skill|toolset → context/hermes-local.md
-- 知识库|Obsidian|wiki|笔记 → context/obsidian.md
-- 备份|cron|定时|自动化 → context/automation.md
-- 纠正|错了|不对|更正 → lessons/corrections.md
-- 发现|新工具|新方法 → lessons/discoveries.md
-未匹配时: 扫描 index.md 标题
+## Stage 1: Rules
+Always load: user/profile.md
+Keyword triggers:
+- server|ECS|SSH|swap|systemd -> context/server.md
+- feishu|lark|bot|gateway -> context/feishu.md
+- Hermes|config|skill|toolset -> context/hermes-local.md
+- wiki|Obsidian|notes -> context/obsidian.md
+- correct|wrong|fix -> lessons/corrections.md
+- discover|new tool -> lessons/discoveries.md
+
+## Stage 2: Entities
+Auto-retrieved from .entity_index.json
+
+## Stage 3: Semantic
+Trigger: Stage 1+2 matches < 2 files
+Model: BGE-small-en-v1.5 | Threshold: > 0.6
+
+## Stage 4: Graph
+Trigger: >= 1 file matched
+Depth: 1 (direct neighbors only)
 
 ## Update
-触发: 用户说"记住" / 纠正错误 / 配置变更 / 任务失败
-写入: 对应目录文件，更新 frontmatter 和 index.md
-格式: 每条带 [日期] 标签
+Trigger: "remember" / correction / config change / task failure
+Write: target file -> update entity index -> update vector index
 
 ## Lifecycle
->90天未命中 → archive/ | 每月清理 index.md | MEMORY.md ≤2200字符
+>90d unmatched -> archive/ | monthly cleanup | MEMORY.md <=2200 chars
 ```
-
-*Character count: ~620 characters — well within budget, leaving room for expansion as the system matures.*
 
 ---
 
-## 9. Comparative Analysis
+## 8. Comparison
 
-### 9.1 HIMRA vs. Flat Memory
+| Dimension | Flat File | Vector DB | RAG-Anything | **HIMRA** |
+|-----------|-----------|-----------|--------------|-----------|
+| Capacity | 2200 chars | Unlimited | Unlimited | **Unlimited** |
+| Retrieval | Full inject | Semantic | Graph+Semantic | **Rules+Entity+Semantic+Graph** |
+| Explainability | High | Low | Medium | **High** |
+| Resources | ~0 | 1-2GB | 2-4GB | **~150MB** |
+| Setup | None | High | Very high | **Low** |
+| Degradation | N/A | Fails | Fails | **Graceful** |
 
-| Dimension | Flat MEMORY.md | HIMRA |
-|-----------|---------------|-------|
-| Capacity | ~2,200 chars | Unlimited (external files) |
-| Retrieval precision | 100% (all loaded) but ~70% irrelevant | ~85-95% relevant |
-| Context efficiency | Low (all or nothing) | High (selective loading) |
-| Maintenance cost | None | Low (frontmatter updates) |
-| Explainability | High (visible in prompt) | High (rules are explicit) |
+### Relationship to RAG
 
-### 9.2 HIMRA vs. Vector Database (Hindsight)
+HIMRA is a specialized RAG for agent memory:
 
-| Dimension | Hindsight | HIMRA |
-|-----------|-----------|-------|
-| Resource requirement | 1-2GB RAM (PostgreSQL + embedding) | ~0 (filesystem only) |
-| Retrieval method | Semantic (embedding similarity) | Lexical (keyword matching) |
-| Synonym handling | Automatic | Manual (trigger enumeration) |
-| Explainability | Low (opaque similarity scores) | High (explicit rules) |
-| Setup complexity | High (database + API + model) | Low (directory + files) |
-| Maintenance | Automatic (vector indexing) | Semi-manual (rule updates) |
+1. **Structured source material:** Agent memories have predictable structure (prefs, configs, lessons). HIMRA exploits this through typed directories and frontmatter metadata.
 
-### 9.3 Hybrid Potential
+2. **Hybrid retrieval:** Standard RAG uses one method (embedding similarity). HIMRA combines four methods in a priority cascade, using expensive methods only when cheap ones fail.
 
-HIMRA and vector-based approaches are not mutually exclusive. A hybrid architecture could use:
+3. **Write-aware:** RAG is read-only. HIMRA has a full write path — the agent actively maintains its own memory.
 
-- **HIMRA** for structured, deterministic memory (configurations, user profile, project context)
-- **Vector search** for unstructured, exploratory memory (conversation history, past solutions)
+### RAG-Anything Contributions
 
-This mirrors how human cognition uses both **declarative memory** (facts, rules) and **episodic memory** (experiences, stories).
+1. **Entity extraction as indexing:** RAG-Anything extracts entities into a knowledge graph. HIMRA applies this to memory files — building an entity index that improves retrieval beyond keywords.
+
+2. **Context-aware loading:** RAG-Anything provides surrounding text when analyzing images. HIMRA applies this — loading related files in the same directory.
+
+3. **Hierarchical relationships:** RAG-Anything's `belongs_to` edges. HIMRA's graph edges (runs, depends_on, configured_by) provide the same navigation.
 
 ---
 
-## 10. Implementation Strategy
+## 9. Implementation Strategy
 
-### 10.1 Phase 1: Directory Structure and Manual Seeding
-
-Create the directory hierarchy and populate initial memory files by extracting knowledge from the current flat MEMORY.md. No code changes required — the agent reads external files when triggered by the router rules in MEMORY.md.
-
-**Estimated effort:** 1-2 hours
-**Risk:** None (purely additive, does not modify existing system)
-
-### 10.2 Phase 2: Agent-Assisted Maintenance
-
-Configure the agent (via skills or system prompt instructions) to automatically maintain the memory system — updating files when events occur, running periodic audits, and optimizing triggers.
-
-**Estimated effort:** 2-4 hours (skill authoring)
-**Risk:** Low (agent may over-write or mis-classify initially)
-
-### 10.3 Phase 3: Automated Retrieval Integration
-
-Implement a lightweight retrieval script or Hermes plugin that automatically parses MEMORY.md rules and injects relevant external memories into the system prompt before each LLM call.
-
-**Estimated effort:** 4-8 hours (Python script or plugin)
-**Risk:** Medium (integration with Hermes prompt builder)
-
-### 10.4 Phase 4: Evaluation and Optimization
-
-Measure retrieval precision, context pollution reduction, and agent task performance across a set of representative conversations. Iterate on trigger vocabulary and priority assignments.
-
-**Metrics:**
-- **Retrieval precision:** % of loaded memories that are relevant to the current query
-- **Context pollution:** % of context budget consumed by irrelevant memories
-- **Memory gap rate:** % of queries where relevant memory was not loaded
-- **Capacity utilization:** Total knowledge stored vs. flat-memory baseline
+| Phase | Effort | What | Resources |
+|-------|--------|------|-----------|
+| 1. Rules | 1-2h | Directory + triggers | 0 |
+| 2. Entities | 2-4h | Entity extraction + index | 0 |
+| 3. Semantic | 4-8h | FAISS + BGE-small | 150MB RAM |
+| 4. Graph | 4-8h | Entity graph + traversal | 10MB RAM |
 
 ---
 
-## 11. Limitations and Future Work
+## 10. Evaluation
 
-### 11.1 Current Limitations
+| # | Condition | Active Stages |
+|---|-----------|---------------|
+| 1 | Baseline | Flat MEMORY.md |
+| 2 | HIMRA v1 | Rules (1) |
+| 3 | HIMRA v2 | Rules + Entities (1-2) |
+| 4 | HIMRA v2.5 | + Semantic (1-3) |
+| 5 | HIMRA v3 | All four (1-4) |
 
-1. **Keyword brittleness:** Trigger-based matching fails on novel phrasings not anticipated in trigger lists
-2. **Manual rule maintenance:** Trigger lists require human curation as new domains emerge
-3. **No cross-file reasoning:** The system cannot infer connections between memories in different files (e.g., "server config changed" implies "update deployment docs")
-4. **Fixed priority:** Priority levels are static; ideally they should adapt based on conversation context
-
-### 11.2 Future Directions
-
-1. **LLM-assisted routing:** Use a small, fast model to classify query intent and select relevant memory files (replacing keyword matching)
-2. **Automatic trigger expansion:** After each session, analyze which queries failed to match and suggest new triggers
-3. **Memory graph:** Replace flat directory with a graph structure where files are linked by semantic relationships
-4. **Collaborative memory:** Multiple agents share a memory directory with access control per file
-5. **Memory compression:** Periodically consolidate verbose entries into concise summaries using LLM
+Metrics: Precision@K > 85%, Recall@K > 80%, Pollution < 15%, Latency < 100ms
 
 ---
 
-## 12. RAG Integration Analysis
+## 11. Limitations
 
-### 12.1 Structural Isomorphism
+1. Entity extraction quality depends on LLM
+2. Graph needs periodic refresh
+3. Fixed priority weights (could be adaptive)
+4. No cross-memory inference
 
-HIMRA and Retrieval-Augmented Generation (RAG) share a fundamental architectural pattern that, to our knowledge, has not been previously formalized. Both systems implement the same three-stage pipeline:
+## 12. Future Work
 
-```
-RAG:    Query → Retrieval(documents) → Augment(prompt) → LLM Generation
-HIMRA:  Query → RuleMatch(memories)  → Inject(context)  → LLM Generation
-```
-
-This isomorphism suggests that HIMRA can be understood as a **specialized instance of RAG** where the retrieval component is replaced by a deterministic rule engine rather than a learned embedding model. Conversely, RAG can be viewed as a **generalized HIMRA** where rules are replaced by continuous similarity metrics.
-
-**Formal correspondence:**
-
-Let $\mathcal{D}$ be an external knowledge base. Both systems define a retrieval function:
-
-$$\text{Retrieve}: Q \times \mathcal{D} \rightarrow 2^{\mathcal{D}}$$
-
-The difference lies in the scoring function:
-
-| System | Scoring Function | Domain |
-|--------|-----------------|--------|
-| RAG | $\text{score}(q, d) = \cos(\mathbf{e}_q, \mathbf{e}_d)$ | Continuous $[0, 1]$ |
-| HIMRA | $\text{score}(q, d) = \mathbb{1}[\text{keywords}(q) \cap T_d \neq \emptyset]$ | Binary $\{0, 1\}$ |
-
-Where $\mathbf{e}_q, \mathbf{e}_d$ are embedding vectors and $T_d$ is the trigger set for document $d$.
-
-### 12.2 Complementary Strengths
-
-The two approaches exhibit complementary failure modes:
-
-| Failure Mode | RAG | HIMRA |
-|-------------|-----|-------|
-| **Synonym blindness** | ✅ Handles automatically (embedding space proximity) | ❌ Requires manual trigger enumeration |
-| **Ambiguous queries** | ❌ May retrieve semantically similar but contextually irrelevant documents | ✅ Rules can encode disambiguation logic |
-| **Novel terminology** | ✅ Generalizes from distributional semantics | ❌ Fails if trigger not predefined |
-| **Structured retrieval** | ❌ Treats all documents as flat chunks | ✅ Hierarchical directory with typed metadata |
-| **Explainability** | ❌ "Similarity score 0.87" is opaque | ✅ "Matched keyword 'SSH'" is transparent |
-| **Resource cost** | ❌ Requires embedding model + vector DB | ✅ Zero additional infrastructure |
-
-This complementarity motivates a hybrid architecture.
-
-### 12.3 Hybrid Architecture: RAG-Enhanced HIMRA
-
-We propose a two-stage retrieval pipeline that combines rule-based routing (HIMRA) with semantic search (RAG):
-
-```
-User Query q
-      │
-      ▼
-┌──────────────────────────┐
-│  Stage 1: Rule Router    │  ← HIMRA (deterministic, zero-cost)
-│                          │
-│  Parse q for keywords    │
-│  Match against triggers  │
-│  Output: R_rule ⊆ 𝒟     │
-│  Confidence: binary      │
-└──────────┬───────────────┘
-           │
-           ▼
-┌──────────────────────────┐
-│  Stage 2: Semantic       │  ← RAG (probabilistic, handles ambiguity)
-│  Fallback                │
-│                          │
-│  If |R_rule| < threshold │
-│  → Embed q               │
-│  → Search vector index   │
-│  Output: R_sem ⊆ 𝒟      │
-│  Confidence: [0, 1]      │
-└──────────┬───────────────┘
-           │
-           ▼
-┌──────────────────────────┐
-│  Stage 3: Merge & Rank   │
-│                          │
-│  R = R_rule ∪ R_sem      │
-│                          │
-│  Score(d) =              │
-│    α · 𝟙[d ∈ R_rule]    │  (rule match: high weight)
-│  + β · sim(q, d)         │  (semantic: lower weight)
-│  where α > β             │
-│                          │
-│  Sort by Score, truncate │
-│  to budget B             │
-└──────────┬───────────────┘
-           │
-           ▼
-     Augmented Prompt → LLM
-```
-
-**Key design decisions:**
-
-1. **Rule-first, semantic-fallback:** Rules run first because they are deterministic, zero-cost, and explainable. Semantic search only activates when rules produce insufficient results (e.g., $|R_{\text{rule}}| < 2$).
-
-2. **Weighted fusion:** Rule-matched documents receive higher weight ($\alpha > \beta$) because they represent human-curated, verified relevance. Semantic matches are probabilistic and should not override explicit rules.
-
-3. **Shared document structure:** Both retrieval backends operate on the same HIMRA directory structure. Each memory file carries both `triggers` (for rule matching) and an embedding vector (for semantic search), stored in a sidecar index.
-
-### 12.4 Implementation Architecture
-
-```
-~/.hermes/memory/
-├── user/
-│   └── profile.md              # Human-readable content
-├── context/
-│   └── server.md
-├── ...
-├── index.md                    # Human-readable catalog
-└── .embeddings/                # Machine-readable vector index
-    ├── index.faiss             # FAISS vector index
-    ├── metadata.json           # file → vector ID mapping
-    └── config.json             # embedding model, dimension
-```
-
-**Embedding pipeline:**
-
-1. On memory file create/update → extract content (strip frontmatter)
-2. Chunk content into passages (512 tokens, 128 overlap)
-3. Generate embeddings using a lightweight model (e.g., `BAAI/bge-small-en-v1.5`, 384-dim)
-4. Store vectors in FAISS index with metadata mapping
-
-**Resource requirements:**
-
-| Component | Memory | CPU | Disk |
-|-----------|--------|-----|------|
-| FAISS index (1000 memories) | ~5 MB | Negligible | ~10 MB |
-| BGE-small model | ~130 MB (load) | Moderate (inference) | ~90 MB |
-| Total | ~150 MB | — | ~100 MB |
-
-This is significantly lighter than a full PostgreSQL + pgvector deployment (~800 MB–1 GB), making it viable for resource-constrained environments such as 2 GB RAM servers.
-
-### 12.5 HIMRA's Contribution to RAG
-
-While RAG is a well-established paradigm, HIMRA contributes two novel elements that address known limitations of standard RAG:
-
-**1. Structured Document Organization**
-
-Standard RAG treats documents as a flat collection of chunks. HIMRA introduces a hierarchical directory structure with typed metadata (priority, triggers, category, temporal information). This structure enables:
-
-- **Scoped retrieval:** Search only within `context/` when the query is configuration-related, reducing noise from `lessons/` or `user/`
-- **Priority-aware ranking:** High-priority documents (user identity) are always included regardless of similarity score
-- **Temporal filtering:** Exclude archived documents from active retrieval
-
-**2. Explainable Retrieval**
-
-A persistent criticism of RAG systems is the opacity of retrieval decisions. HIMRA's rule-based component provides a natural explanation layer: "This memory was loaded because the user mentioned 'SSH', which matches the trigger list in `context/server.md`." This explainability is valuable for:
-
-- **Debugging:** When the agent behaves unexpectedly, the retrieval trace shows exactly which memories were loaded and why
-- **User trust:** Users can verify that the agent's memory of their preferences is accurate
-- **System tuning:** When retrieval misses occur, the fix is a human-readable trigger update rather than opaque hyperparameter tuning
-
-### 12.6 Formal Model: Hybrid Retrieval
-
-Extending the formal model from Section 3.3, the hybrid retrieval function is:
-
-$$R_{\text{hybrid}}(q) = \arg\max_{S \subseteq \mathcal{D}, |S| \leq k} \sum_{d \in S} \left[ \alpha \cdot \mathbb{1}[T_d \cap \text{kw}(q) \neq \emptyset] + \beta \cdot \text{sim}(\mathbf{e}_q, \mathbf{e}_d) \right]$$
-
-Subject to:
-
-$$\sum_{d \in S} |C_d| \leq B \quad \text{(budget constraint)}$$
-
-Where:
-- $k$ = maximum number of documents to retrieve
-- $B$ = character budget for injected context
-- $\alpha, \beta$ = weights for rule and semantic components ($\alpha > \beta$)
-- $\text{kw}(q)$ = keyword extraction from query
-- $T_d$ = trigger set for document $d$
-- $\mathbf{e}_q, \mathbf{e}_d$ = embedding vectors
-
-**Special cases:**
-
-- $\alpha = 1, \beta = 0$: Pure HIMRA (rules only)
-- $\alpha = 0, \beta = 1$: Pure RAG (semantic only)
-- $\alpha > \beta > 0$: Hybrid with rule priority
-
-### 12.7 Evaluation Framework
-
-To validate the hybrid approach, we propose the following experimental design:
-
-**Datasets:** Construct a benchmark of 100 query-memory pairs drawn from real agent conversations, annotated with ground-truth relevant memories.
-
-**Conditions:**
-
-| Condition | Configuration |
-|-----------|---------------|
-| Baseline | Flat MEMORY.md (current system) |
-| HIMRA-only | Rules, no embeddings |
-| RAG-only | Embeddings, no rules |
-| Hybrid-1 | Rules + semantic fallback ($\alpha=0.7, \beta=0.3$) |
-| Hybrid-2 | Rules + semantic boost ($\alpha=0.5, \beta=0.5$) |
-
-**Metrics:**
-
-| Metric | Definition |
-|--------|-----------|
-| **Retrieval Precision@K** | % of retrieved memories that are relevant |
-| **Retrieval Recall@K** | % of relevant memories that are retrieved |
-| **Context Pollution** | % of context budget consumed by irrelevant memories |
-| **Latency** | Time from query to augmented prompt |
-| **Cost** | Token/monetary cost of retrieval (embedding API calls) |
-| **Explainability Score** | % of retrieval decisions with human-readable justification |
-
-**Expected results:**
-
-- HIMRA-only outperforms RAG-only on precision (rules are exact) but underperforms on recall (rules miss synonyms)
-- Hybrid-1 outperforms both on F1, with near-zero latency overhead (semantic search only triggers for the ~20% of queries rules miss)
-- Hybrid-2 provides marginal improvement over Hybrid-1 at higher cost (embedding computation for every query)
-
-### 12.8 Deployment Strategy for Hermes Agent
-
-The hybrid architecture can be incrementally deployed within Hermes Agent:
-
-**Phase A — HIMRA only (zero infrastructure):**
-- Implement directory-based memory with trigger rules
-- No embedding model required
-- Validates the rule-based retrieval approach
-
-**Phase B — Add local embeddings:**
-- Install `sentence-transformers` + `BAAI/bge-small-en-v1.5`
-- Build FAISS index from memory files
-- Enable semantic fallback for unmatched queries
-
-**Phase C — Optimize fusion weights:**
-- Collect retrieval logs (which stage matched, what was loaded)
-- Tune $\alpha, \beta$ based on precision/recall measurements
-- Add adaptive weights (e.g., increase $\beta$ for creative tasks, increase $\alpha$ for technical tasks)
-
-**Phase D — Advanced enhancements:**
-- Incremental index updates (avoid full rebuild on each memory change)
-- Query expansion (use LLM to rewrite query before semantic search)
-- Cross-memory reasoning (detect when one memory update implies changes to another)
+1. Adaptive stage weights based on query type
+2. LLM-in-the-loop intent classification
+3. Automatic trigger expansion from missed queries
+4. Multi-agent memory sharing with access control
+5. LLM-based memory compression and summarization
 
 ---
 
 ## 13. Conclusion
 
-HIMRA demonstrates that effective agent memory management need not require heavyweight infrastructure. By reconstraining the problem — using the existing MEMORY.md file as a routing specification rather than a storage container — we achieve significant improvements in effective capacity, context efficiency, and system transparency.
+HIMRA combines rule matching, entity indexing, semantic search, and graph traversal in a priority cascade. Rules catch common cases (free, explainable), entities catch synonyms (free, automatic), semantic search catches novel phrasings (cheap), graph traversal catches cross-topic links (cheap).
 
-The architecture is immediately deployable within the Hermes Agent ecosystem with zero infrastructure changes, and provides a foundation for incremental enhancement toward more sophisticated retrieval mechanisms.
+The architecture is incrementally deployable: Stage 1-2 need zero infrastructure, Stage 3-4 add ~150MB RAM. Suitable for 2GB servers where vector databases are infeasible.
 
-The key insight — **a small, well-structured instruction set can govern a large, unstructured knowledge base** — may generalize beyond memory management to other aspects of agent configuration and behavior specification.
+Key insight: **agent memory has predictable structure** that can be exploited through typed directories, entity extraction, and relationship graphs. A 2200-character router can govern an effectively unlimited knowledge base.
 
 ---
 
 ## References
 
 1. Nous Research. (2026). Hermes Agent. https://github.com/NousResearch/hermes-agent
-2. Zhang, J. (2026). Hindsight Memory Guide for Hermes. https://github.com/haitao338241-collab/hermes-hindsight-guide
-3. Anthropic. (2026). Skills Specification. https://github.com/anthropics/skills
-4. Packer, C., et al. (2023). MemGPT: Towards LLMs as Operating Systems. arXiv:2310.08560
-5. Zhong, W., et al. (2024). MemoryBank: Enhancing Large Language Models with Long-Term Memory. AAAI 2024
-6. Lewis, P., et al. (2020). Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks. NeurIPS 2020
-7. Gao, Y., et al. (2024). Retrieval-Augmented Generation for Large Language Models: A Survey. arXiv:2312.10997
-8. Xiao, S., et al. (2024). BGE: BAAI General Embedding. arXiv:2308.03281
-9. Johnson, J., et al. (2019). Billion-scale similarity search with GPUs. IEEE Transactions on Big Data
-10. Mao, K., et al. (2024). RaDA: Retrieval-Augmented Decision Agent. arXiv:2404.02345
+2. Zhang, J. (2026). Hindsight Memory Guide. https://github.com/haitao338241-collab/hermes-hindsight-guide
+3. Li, Z., et al. (2025). RAG-Anything: All-in-One Multimodal RAG. HKUDS. arXiv:2510.12323
+4. Guo, Z., et al. (2024). LightRAG. HKUDS. arXiv:2410.05779
+5. Packer, C., et al. (2023). MemGPT. arXiv:2310.08560
+6. Lewis, P., et al. (2020). RAG. NeurIPS 2020
+7. Gao, Y., et al. (2024). RAG Survey. arXiv:2312.10997
+8. Xiao, S., et al. (2024). BGE. arXiv:2308.03281
+9. Zhong, W., et al. (2024). MemoryBank. AAAI 2024
+10. Anthropic. (2026). Skills Specification. https://github.com/anthropics/skills
 
 ---
 
-*Report prepared for discussion with academic advisor. Architecture design by Zhang Jing, 2026.*
+*Architecture design by Zhang Jing, 2026.*
