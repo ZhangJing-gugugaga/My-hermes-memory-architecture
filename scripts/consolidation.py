@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""
-n# ⚠️ HIMRA v5.1: 此脚本仅在 Hindsight 不可用时作为回退方案使用。
+
+# ⚠️ HIMRA v5.1: 此脚本仅在 Hindsight 不可用时作为回退方案使用。
 # 如果 Hindsight 可用（localhost:9177 healthy），记忆生命周期由 Hindsight 机制管理。
+"""
 HIMRA v5.0 Consolidation Script
 cron: 每天凌晨 02:00 执行
 巩固条件: retrieval_count >= 3 -> long-term, 14天未召回 -> summaries
