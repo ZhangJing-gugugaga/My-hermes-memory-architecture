@@ -8,7 +8,7 @@ triggers:
     spatial: []
   associative:
     queries:
-      - query: "Obsidian Skills 笔记位于 D:\Obsidian Vault\Skills and plugins.md"
+      - query: "Obsidian Skills 笔记位于 D:/Obsidian Vault/Skills and plugins.md"
         confidence: 0.6
     pathways: []
 entities:
@@ -26,7 +26,7 @@ temporal:
 always_load: false
 priority: medium
 updated: 2026-06-18
-summary: "Obsidian Skills 笔记位于 D:\Obsidian Vault\Skills and plugins.md"
+summary: "Obsidian Skills 笔记位于 D:/Obsidian Vault/Skills and plugins.md"
 version: 4
 cross_links: []
 ---

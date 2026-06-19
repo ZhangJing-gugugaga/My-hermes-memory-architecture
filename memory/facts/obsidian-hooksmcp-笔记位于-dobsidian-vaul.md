@@ -8,7 +8,7 @@ triggers:
     spatial: []
   associative:
     queries:
-      - query: "Obsidian Hooks/MCP 笔记位于 D:\Obsidian Vault\Hooks and MCP.md"
+      - query: "Obsidian Hooks/MCP 笔记位于 D:/Obsidian Vault/Hooks and MCP.md"
         confidence: 0.6
     pathways: []
 entities:
@@ -26,7 +26,7 @@ temporal:
 always_load: false
 priority: medium
 updated: 2026-06-18
-summary: "Obsidian Hooks/MCP 笔记位于 D:\Obsidian Vault\Hooks and MCP.md"
+summary: "Obsidian Hooks/MCP 笔记位于 D:/Obsidian Vault/Hooks and MCP.md"
 version: 4
 cross_links: []
 ---
