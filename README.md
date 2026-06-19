@@ -1,423 +1,210 @@
-# HIMRA: Hierarchical Indexed Memory Retrieval Architecture for LLM-Based Autonomous Agents
+# HIMRA v4 — Memory Max
 
-**A Hybrid Rule-Semantic Memory System with Knowledge Graph Integration**
+> **无限存储流派**：2200 字符路由器，管 70GB 知识海洋。
+> 设计目标：最大记忆深度、最大召回率、不考虑交互体验。
 
----
-
-## Abstract
-
-Current LLM-based autonomous agents employ flat memory architectures where all persistent knowledge is stored in a single file and injected into every conversation turn. This causes **memory pollution**, **capacity constraints**, and **context inefficiency**.
-
-This paper proposes **HIMRA**, a hybrid memory system combining three retrieval paradigms — **rule-based routing**, **semantic vector search**, and **knowledge graph traversal** — within a hierarchical directory structure. The core insight is to transform the constrained memory file from a storage container into a **multi-stage retrieval router**.
-
-Drawing on RAG and RAG-Anything (HKUDS 2025), we present an architecture that is explainable, resource-efficient (2GB RAM), and incrementally deployable.
-
-**Keywords:** autonomous agents, memory management, RAG, knowledge graph, context engineering
-
----
-
-## 1. Introduction
-
-### 1.1 Background
-
-LLM-based autonomous agents (Hermes Agent, Claude Code, OpenClaw) require persistent memory across sessions. Current implementations use flat files (limited) or vector databases (resource-intensive). Neither satisfies scalability + explainability + resource efficiency simultaneously.
-
-### 1.2 The Memory Problem
-
-| Approach | Example | Strength | Fatal Weakness |
-|----------|---------|----------|----------------|
-| Flat file | Hermes MEMORY.md | Simple, deterministic | 2,200-char ceiling |
-| Vector DB | Hindsight/Mem0 | Unlimited, semantic | 1-2GB RAM, opaque |
-| Knowledge graph | RAG-Anything | Rich relationships | Heavy, designed for documents |
-
-### 1.3 Research Questions
-
-> **RQ1:** Can a hierarchical directory structure with routing rules replace flat-file memory within the existing character budget?
->
-> **RQ2:** Can rule-based, semantic, and graph retrieval be combined into a unified pipeline?
->
-> **RQ3:** Can this operate within 2GB RAM without external databases?
-
-### 1.4 Architecture Evolution
+## 核心思想
 
 ```
-Stage 1: Rule-Based Router (HIMRA v1)
-  Solution: Directory structure + keyword triggers
-  Limitation: Synonym blindness
-
-         + entity extraction
-
-Stage 2: Entity-Enhanced (HIMRA v2)
-  Solution: LLM-extracted entity index
-  Limitation: No relationship awareness
-
-         + knowledge graph + semantic search
-
-Stage 3: Graph-Enhanced Hybrid (HIMRA v3)
-  Solution: Entity graph + embedding fallback
-  Inspired by: RAG-Anything (HKUDS, 2025)
+v1: MEMORY.md 是存储容器（扁平记忆）
+v3: MEMORY.md 是检索路由器（五组件+四阶段）
+v4: MEMORY.md 是多级知识塔的入口（三层架构+触发器排练+主动巩固）
 ```
 
----
-
-## 2. Problem Analysis
-
-### 2.1 Flat Memory Anatomy
-
-Every turn, Hermes injects ALL of MEMORY.md (2200 chars) + USER.md (1375 chars) regardless of topic. When discussing servers, memories about Obsidian and coding style waste ~70% of budget.
-
-### 2.2 Failure Modes
-
-- **Type I - Pollution:** Irrelevant memories degrade performance
-- **Type II - Starvation:** Character limit forces eviction of valuable knowledge
-- **Type III - Collision:** Multiple facts compressed, losing precision
-- **Type IV - Staleness:** Outdated info persists
-
-### 2.3 Numbers
-
-| Metric | Value |
-|--------|-------|
-| Capacity | 2,200 chars |
-| Max entries | ~14 facts |
-| Saturation time | ~7 days |
-| Context waste | ~70% |
-
----
-
-## 3. Design Principles
-
-### 3.1 Separation of Routing and Storage
-
-The router (MEMORY.md, 2200 chars) = rules + paths. The store (external files) = actual knowledge, unlimited.
-
-### 3.2 Lazy Loading
-
-Only relevant memories loaded. Four-stage pipeline determines relevance.
-
-### 3.3 Bounded Core, Unbounded Periphery
+**v4 的核心公式：**
 
 ```
-Bounded (2200 chars):           Unlimited:
-+---------------------+         +---------------------------+
-|  MEMORY.md          |         |  memory/                  |
-|  (rules + paths)    |-------->|  user/ context/ lessons/  |
-+---------------------+         |  .entities/ .embeddings/  |
-  "The card catalog"            +---------------------------+
-                                  "The library stacks"
+写入 = 存储事实 + 生成描述性触发器 + 生成关联性触发器 + 更新摘要
+召回 = 触发器匹配(热) → 实体匹配(温) → 向量+图遍历(冷) → 打分排序
+巩固 = 后台重组 + 冗余合并 + 摘要蒸馏 + 过期归档
 ```
 
-### 3.4 Explainable Retrieval
-
-Every injection justified: "Loaded because SSH matches trigger in context/server.md"
-
-### 3.5 Graceful Degradation
-
-Works at three levels. Embedding unavailable -> rules only. Entity index corrupted -> keywords only. Never fails completely.
-
----
-
-## 4. Architecture Overview
-
-Five components:
+## 三层知识塔
 
 ```
-+----------------------------------------------------------+
-| Component          | Role                                 |
-|--------------------|--------------------------------------|
-| 1. Memory Store    | *.md files with YAML frontmatter     |
-| 2. Entity Index    | entity -> file mapping (JSON)        |
-| 3. Vector Index    | FAISS embeddings (optional)          |
-| 4. Graph Index     | entity relationships (JSON)          |
-| 5. Retrieval Router| MEMORY.md rules (always loaded)      |
-+----------------------------------------------------------+
+┌──────────────────────────────────────────────────────┐
+│               LLM 上下文 (2200 chars)                │
+│  ┌────────────────────────────────────────────────┐  │
+│  │ Planner Summary (~300 chars)                    │  │
+│  │ 当前状态蒸馏，全局快照                           │  │
+│  ├────────────────────────────────────────────────┤  │
+│  │ Retrieval Router (~1900 chars)                  │  │
+│  │ 路由规则 + 五阶段配置 + 写入指令                 │  │
+│  └────────────────────────────────────────────────┘  │
+└──────────────────────┬───────────────────────────────┘
+                       │ 命中的记忆文件注入
+┌──────────────────────▼───────────────────────────────┐
+│                                                      │
+│  ┌────────────┐  ┌────────────┐  ┌────────────────┐ │
+│  │ Level 1    │  │ Level 2    │  │ Level 3        │ │
+│  │ 热层 Hot   │  │ 温层 Warm  │  │ 冷层 Cold      │ │
+│  │            │  │            │  │                │ │
+│  │ MEMORY.md  │  │ 索引文件   │  │ 全文存储       │ │
+│  │ 路由规则   │  │ 触发器     │  │ 向量检索       │ │
+│  │ Planner    │  │ 实体索引   │  │ 图遍历         │ │
+│  │ Summary    │  │ 图索引     │  │ 全文搜索       │ │
+│  │            │  │ 摘要索引   │  │                │ │
+│  │ <10ms      │  │ <100ms     │  │ <500ms         │ │
+│  │ ~50 规则   │  │ ~500 条目  │  │ ~70GB          │ │
+│  └────────────┘  └────────────┘  └────────────────┘ │
+│                                                      │
+└──────────────────────────────────────────────────────┘
 ```
 
-### Component 1: Memory Store
+## 记忆粒度（四层目录）
 
 ```
 memory/
-+-- user/profile.md           # Who the user is (always loaded)
-+-- context/server.md         # ECS config, SSH, security groups
-+-- context/feishu.md         # Feishu integration details
-+-- lessons/corrections.md    # User corrections
-+-- lessons/discoveries.md    # New tools/methods
-+-- index.md                  # Full catalog
+├── facts/          # 单事实级 — 一个事实一个文件
+│   ├── server-ip.md
+│   ├── swap-config.md
+│   └── ...（每个 <1KB）
+│
+├── sessions/       # 对话级 — 保留完整对话弧线
+│   ├── 2026-06-18-himra-discussion.md
+│   ├── 2026-06-19-paper-analysis.md
+│   └── ...（每个 1-10KB）
+│
+├── sources/        # 原始知识 — 论文、仓库、网页全文
+│   ├── tmem-paper.md
+│   ├── activemem-paper.md
+│   ├── github-rag-techniques.md
+│   └── ...（每个 10-100KB）
+│
+├── summaries/      # 主题摘要 — 每个主题的蒸馏版
+│   ├── memory-systems.md      # 覆盖所有记忆相关知识
+│   ├── mcp-protocol.md        # 覆盖所有 MCP 相关知识
+│   ├── agent-frameworks.md    # 覆盖所有 Agent 框架
+│   └── ...（每个 1-5KB）
+│
+├── .trigger_index.json     # 触发器索引（描述性+关联性）
+├── .entity_index.json      # 实体索引
+├── .graph_index.json       # 关系图索引
+├── .summary_index.json     # 摘要索引（主题→文件映射）
+└── .embeddings/            # 向量索引（FAISS + BGE-small）
+    └── index.faiss
 ```
 
-Each file has frontmatter:
+**加载策略：**
+1. 命中 summary → 只加载 summary（1-5KB，省上下文）
+2. summary 不够 → 加载对应的 source 原文（10-100KB）
+3. 命中 fact → 直接加载（<1KB，几乎免费）
+4. 命中 session → 按相关性截取片段
 
-```yaml
-name: server-configuration
-triggers: [server, ECS, SSH, security-group, swap, aliyun]
-entities: [123.57.30.132, ecs.e-c1m1.large, Ubuntu 26.04]
-always_load: false
-priority: medium
-updated: 2026-06-18
-```
-
-**Key fields:**
-- `triggers` — keywords for rule-based retrieval (Stage 1)
-- `entities` — extracted concepts for entity matching (Stage 2, auto-generated)
-- `priority` — loading priority when multiple files match
-- `always_load` — if true, injected every turn (only user/profile.md)
-
-### Component 2: Entity Index
-
-Maps entities to source files. Auto-generated by LLM when files are created/updated.
-
-```json
-{
-  "123.57.30.132": ["context/server.md"],
-  "Ubuntu 26.04":  ["context/server.md"],
-  "feishu":        ["context/feishu.md"],
-  "paramiko":      ["lessons/discoveries.md"]
-}
-```
-
-**Why this matters:** Catches synonyms automatically. "server", "ECS", "server", "aliyun" all map to server.md without manual enumeration. This solves the biggest limitation of pure keyword-based retrieval.
-
-### Component 3: Vector Index (Optional)
-
-FAISS + BGE-small-en-v1.5 (384-dim). Only activates when rules + entities produce < 2 matches. ~150MB RAM.
+## 五阶段检索流水线
 
 ```
-.embeddings/
-+-- index.faiss          # Vector index
-+-- metadata.json        # vector_id -> (file, chunk, timestamp)
-+-- config.json          # model, dimension, chunk params
+Stage 0: 触发器匹配 (v4 新增)
+  ├── 描述性触发器：实体/时间/空间精确匹配
+  ├── 关联性触发器：query embedding vs 预计算 trigger embedding
+  └── 阈值：descriptive=exact, associative>0.70
+
+Stage 1: 规则匹配 (v3 复用)
+  ├── 关键词触发：MEMORY.md 中的规则
+  └── always_load：始终加载的文件
+
+Stage 2: 实体匹配 (v3 复用)
+  └── .entity_index.json 查找
+
+Stage 3: 语义检索 (v3 复用, v4 扩展)
+  ├── 触发条件：Stage 0+1+2 命中 < 2 个唯一文件
+  ├── 模型：BGE-small (384维, 130MB RAM)
+  └── 阈值：> 0.6
+
+Stage 4: 图遍历 (v3 复用, v4 增强)
+  ├── 触发条件：≥ 1 个文件命中
+  ├── 深度：1-3（自适应，基于触发器置信度）
+  ├── 路径：cross_links + associative.pathways
+  └── 降级：深度 1 足够时不要走深度 3
+
+打分公式：
+  Score(f) = 0.35·trigger + 0.25·rule + 0.20·entity
+           + 0.12·semantic + 0.08·graph
 ```
 
-### Component 4: Graph Index
-
-Entity relationships for cross-topic navigation:
+## 写入流水线
 
 ```
-"ECS Server" --[runs]--> "hermes-gateway"
-"hermes-gateway" --[depends_on]--> "lark-oapi"
-"lark-oapi" --[installed_on]--> "123.57.30.132"
+用户输入（对话/抓取/导入）
+  │
+  ▼
+1. 事实提取
+  LLM 提取: {fact, entities, type}
+  type: fact | session | source | summary
+  │
+  ▼
+2. 触发器排练 (T-Mem)
+  Descriptive: 实体/时间/空间
+  Associative: LLM 生成 5-10 个未来查询预测
+  │
+  ▼
+3. 跨记忆关联检测
+  检测与已有记忆的关联 → cross_links
+  │
+  ▼
+4. 写入目标文件
+  YAML frontmatter + 内容
+  │
+  ▼
+5. 更新所有索引
+  .trigger_index.json  (新触发器)
+  .entity_index.json   (新实体)
+  .graph_index.json    (新关系)
+  .summary_index.json  (新摘要映射)
+  .embeddings/index.faiss (新向量)
+  │
+  ▼
+6. 检查 Planner Summary 是否需要更新
 ```
 
-When user asks about "server", graph reveals that "hermes-gateway" and "lark-oapi" are related. System can auto-load context/feishu.md as supplementary context.
-
-Stored as simple JSON (~10MB RAM). No Neo4j needed.
-
-### Component 5: Retrieval Router (MEMORY.md)
-
-The 2200-char rule file that orchestrates the four-stage pipeline. Always loaded into LLM context.
-
----
-
-## 5. Four-Stage Retrieval Pipeline
+## 主动巩固 (Consolidation)
 
 ```
-User Query: "my server swap config?"
-                |
-    +-----------+-----------+
-    | Stage 1: Rule Match   | "server" + "swap" -> server.md
-    | Stage 2: Entity Match | [server, swap] -> server.md (dup)
-    | Stage 3: Semantic     | Skip (>=2 matches)
-    | Stage 4: Graph        | server -> hermes-gateway (no new files)
-    +-----------+-----------+
-                |
-                v
-    Injected: user/profile.md + context/server.md
+触发方式：
+  - auto_retain: 每 5 轮（Hindsight 自动）
+  - cron job: 每天凌晨（服务器）
+
+巩固任务：
+  ├── 检测跨记忆链接（更新 cross_links）
+  ├── 合并冗余事实（同一事实多个版本 → 合并）
+  ├── 标记过期信息（>90 天未访问 → archive/）
+  ├── 重新生成高频访问记忆的关联性触发器
+  ├── 重新蒸馏 Planner Summary
+  └── 重新生成 summaries/（新知识进来后更新主题摘要）
 ```
 
-| Stage | Method | Cost | Handles |
-|-------|--------|------|---------|
-| 1. Rules | Keyword matching | Free | Common vocabulary |
-| 2. Entities | Index lookup | Free | Synonyms, technical terms |
-| 3. Semantic | Embedding similarity | ~50ms | Novel phrasings |
-| 4. Graph | Relationship traversal | ~10ms | Cross-topic links |
+## 资源预算（2核2GB + 70GB 磁盘）
 
-### Scoring
+| 资源 | 用量 | 说明 |
+|------|------|------|
+| RAM: BGE-small | 130MB | 向量模型常驻 |
+| RAM: FAISS 索引 | ~50MB | 50万条记忆的 embedding |
+| RAM: FlashRank | ~30MB | 重排序模型 |
+| RAM: 其他 | ~300MB | Python + Hindsight + Hermes |
+| **RAM 总计** | **~510MB** | 2GB 的 25%，安全 |
+| Disk: 记忆文件 | ~1GB | 10万条记忆（平均 10KB/条） |
+| Disk: 向量索引 | ~750MB | 50万条 × 1.5KB |
+| Disk: 原始知识 | ~50GB | 论文、仓库、网页缓存 |
+| **Disk 总计** | **~52GB** | 70GB 的 74%，有余量 |
 
-Score(f) = alpha * [rule match] + beta * [entity match] + gamma * sim(q,f) + delta * graph(f)
-
-Where alpha > beta > gamma > delta (deterministic weighted higher).
-
-### Fallback
-
-If nothing matches -> load index.md (catalog) -> LLM browses and requests files.
-
----
-
-## 6. Memory Lifecycle
-
-### Update Triggers
-
-| Event | Target | Action |
-|-------|--------|--------|
-| User says "remember" | Domain file | Write |
-| Correction | lessons/corrections.md | Append |
-| Config change | context/*.md | Overwrite |
-| Task failure | lessons/failures.md | Append |
-
-### Entity Maintenance
-
-On file update: re-extract entities -> update index -> update graph -> re-embed (if vector index active).
-
-### Aging
-
-- 0-30 days: Active (full retrieval)
-- 30-90 days: Stale (exact match only)
-- 90+ days: Archive (excluded)
-
-### Self-Healing
-
-Agent detects memory gaps and writes corrective entries with root cause analysis.
-
----
-
-## 7. MEMORY.md Specification
-
-### Budget Allocation (2200 chars)
-
-| Section | Budget | Content |
-|---------|--------|---------|
-| Retrieval rules | ~1200 (55%) | Keywords, entity triggers |
-| Update rules | ~300 (14%) | Write triggers and format |
-| Lifecycle rules | ~200 (9%) | Aging, archival |
-| Pipeline config | ~200 (9%) | Stage weights, thresholds |
-| Path index | ~200 (9%) | Directory structure |
-| Metadata | ~100 (4%) | Version, audit date |
-
-### Reference Template
+## 目录结构
 
 ```
-# Memory Router v3.0
-
-## Paths
-user/ = user profile | context/ = project context | lessons/ = accumulated knowledge
-index.md = full catalog | .entities/ = entity index | .embeddings/ = vector index
-
-## Stage 1: Rules
-Always load: user/profile.md
-Keyword triggers:
-- server|ECS|SSH|swap|systemd -> context/server.md
-- feishu|lark|bot|gateway -> context/feishu.md
-- Hermes|config|skill|toolset -> context/hermes-local.md
-- wiki|Obsidian|notes -> context/obsidian.md
-- correct|wrong|fix -> lessons/corrections.md
-- discover|new tool -> lessons/discoveries.md
-
-## Stage 2: Entities
-Auto-retrieved from .entity_index.json
-
-## Stage 3: Semantic
-Trigger: Stage 1+2 matches < 2 files
-Model: BGE-small-en-v1.5 | Threshold: > 0.6
-
-## Stage 4: Graph
-Trigger: >= 1 file matched
-Depth: 1 (direct neighbors only)
-
-## Update
-Trigger: "remember" / correction / config change / task failure
-Write: target file -> update entity index -> update vector index
-
-## Lifecycle
->90d unmatched -> archive/ | monthly cleanup | MEMORY.md <=2200 chars
+himra/
+├── README.md           # 本文件 — 架构总览
+├── SPEC.md             # 记忆文件格式规范
+├── ARCHITECTURE.md     # 详细设计文档
+├── memory/             # 记忆文件模板
+│   ├── facts/.gitkeep
+│   ├── sessions/.gitkeep
+│   ├── sources/.gitkeep
+│   └── summaries/.gitkeep
+├── scripts/            # 工具脚本
+│   ├── validate_memory.py    # schema 验证
+│   ├── init_indices.py       # 初始化索引
+│   └── consolidation.py      # 巩固脚本
+└── templates/          # 模板文件
+    ├── memory_template.md    # 记忆文件模板
+    ├── summary_template.md   # 摘要模板
+    └── memory_router.md      # MEMORY.md v4 模板
 ```
-
----
-
-## 8. Comparison
-
-| Dimension | Flat File | Vector DB | RAG-Anything | **HIMRA** |
-|-----------|-----------|-----------|--------------|-----------|
-| Capacity | 2200 chars | Unlimited | Unlimited | **Unlimited** |
-| Retrieval | Full inject | Semantic | Graph+Semantic | **Rules+Entity+Semantic+Graph** |
-| Explainability | High | Low | Medium | **High** |
-| Resources | ~0 | 1-2GB | 2-4GB | **~150MB** |
-| Setup | None | High | Very high | **Low** |
-| Degradation | N/A | Fails | Fails | **Graceful** |
-
-### Relationship to RAG
-
-HIMRA is a specialized RAG for agent memory:
-
-1. **Structured source material:** Agent memories have predictable structure (prefs, configs, lessons). HIMRA exploits this through typed directories and frontmatter metadata.
-
-2. **Hybrid retrieval:** Standard RAG uses one method (embedding similarity). HIMRA combines four methods in a priority cascade, using expensive methods only when cheap ones fail.
-
-3. **Write-aware:** RAG is read-only. HIMRA has a full write path — the agent actively maintains its own memory.
-
-### RAG-Anything Contributions
-
-1. **Entity extraction as indexing:** RAG-Anything extracts entities into a knowledge graph. HIMRA applies this to memory files — building an entity index that improves retrieval beyond keywords.
-
-2. **Context-aware loading:** RAG-Anything provides surrounding text when analyzing images. HIMRA applies this — loading related files in the same directory.
-
-3. **Hierarchical relationships:** RAG-Anything's `belongs_to` edges. HIMRA's graph edges (runs, depends_on, configured_by) provide the same navigation.
-
----
-
-## 9. Implementation Strategy
-
-| Phase | Effort | What | Resources |
-|-------|--------|------|-----------|
-| 1. Rules | 1-2h | Directory + triggers | 0 |
-| 2. Entities | 2-4h | Entity extraction + index | 0 |
-| 3. Semantic | 4-8h | FAISS + BGE-small | 150MB RAM |
-| 4. Graph | 4-8h | Entity graph + traversal | 10MB RAM |
-
----
-
-## 10. Evaluation
-
-| # | Condition | Active Stages |
-|---|-----------|---------------|
-| 1 | Baseline | Flat MEMORY.md |
-| 2 | HIMRA v1 | Rules (1) |
-| 3 | HIMRA v2 | Rules + Entities (1-2) |
-| 4 | HIMRA v2.5 | + Semantic (1-3) |
-| 5 | HIMRA v3 | All four (1-4) |
-
-Metrics: Precision@K > 85%, Recall@K > 80%, Pollution < 15%, Latency < 100ms
-
----
-
-## 11. Limitations
-
-1. Entity extraction quality depends on LLM
-2. Graph needs periodic refresh
-3. Fixed priority weights (could be adaptive)
-4. No cross-memory inference
-
-## 12. Future Work
-
-1. Adaptive stage weights based on query type
-2. LLM-in-the-loop intent classification
-3. Automatic trigger expansion from missed queries
-4. Multi-agent memory sharing with access control
-5. LLM-based memory compression and summarization
-
----
-
-## 13. Conclusion
-
-HIMRA combines rule matching, entity indexing, semantic search, and graph traversal in a priority cascade. Rules catch common cases (free, explainable), entities catch synonyms (free, automatic), semantic search catches novel phrasings (cheap), graph traversal catches cross-topic links (cheap).
-
-The architecture is incrementally deployable: Stage 1-2 need zero infrastructure, Stage 3-4 add ~150MB RAM. Suitable for 2GB servers where vector databases are infeasible.
-
-Key insight: **agent memory has predictable structure** that can be exploited through typed directories, entity extraction, and relationship graphs. A 2200-character router can govern an effectively unlimited knowledge base.
-
----
-
-## References
-
-1. Nous Research. (2026). Hermes Agent. https://github.com/NousResearch/hermes-agent
-2. Zhang, J. (2026). Hindsight Memory Guide. https://github.com/haitao338241-collab/hermes-hindsight-guide
-3. Li, Z., et al. (2025). RAG-Anything: All-in-One Multimodal RAG. HKUDS. arXiv:2510.12323
-4. Guo, Z., et al. (2024). LightRAG. HKUDS. arXiv:2410.05779
-5. Packer, C., et al. (2023). MemGPT. arXiv:2310.08560
-6. Lewis, P., et al. (2020). RAG. NeurIPS 2020
-7. Gao, Y., et al. (2024). RAG Survey. arXiv:2312.10997
-8. Xiao, S., et al. (2024). BGE. arXiv:2308.03281
-9. Zhong, W., et al. (2024). MemoryBank. AAAI 2024
-10. Anthropic. (2026). Skills Specification. https://github.com/anthropics/skills
-
----
-
-*Architecture design by Zhang Jing, 2026.*
