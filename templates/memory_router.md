@@ -22,6 +22,17 @@
 2. 再查 short-term/（最近信息）
 3. 最后调 Hindsight recall（语义搜索）
 
+## 检索后回写规则
+
+当 Hermes 检索时使用了一条短期记忆（无论是走 HIMRA 路由命中还是 Hindsight 语义召回），必须执行：
+
+1. 打开对应的 short-term/YYYY-MM-DD/session-XXXX.md
+2. 将 retrieval_count 字段值 +1
+3. 将 last_retrieved 字段更新为当前时间戳（ISO 8601）
+4. 同步更新 short-term/index.md 中对应行的召回次数和最后召回时间
+
+此规则确保 consolidation.py 能正确判断哪些短期记忆应升级为长期记忆。
+
 ## 巩固规则
 
 - 短期记忆被召回 ≥3 次 → 自动迁移到长期记忆
