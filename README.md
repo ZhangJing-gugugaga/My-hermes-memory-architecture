@@ -1,7 +1,7 @@
-# HIMRA v4 — Memory Max
+# HIMRA v5.0 — Human Memory
 
-> **无限存储流派**：2200 字符路由器，管 70GB 知识海洋。
-> 设计目标：最大记忆深度、最大召回率、不考虑交互体验。
+> **双轴架构**：检索轴（怎么找到记忆）+ 生命周期轴（记忆怎么生长和衰减）。
+> v1-v4 解决检索，v5 新增生命周期管理。
 
 ## 核心思想
 
@@ -9,236 +9,172 @@
 v1: MEMORY.md 是存储容器（扁平记忆）
 v3: MEMORY.md 是检索路由器（五组件+四阶段）
 v4: MEMORY.md 是多级知识塔的入口（三层架构+触发器排练+主动巩固）
+v5: MEMORY.md 是路由规则 + 记忆生命周期管理（短期→巩固→长期→衰减）
 ```
 
-**v4 的核心公式：**
+**v5 的核心公式：**
 
 ```
-写入(同步) = 存储事实 + 更新实体索引 (< 2s)
-写入(异步) = 生成触发器 + 生成 embedding + 更新图索引
-召回 = 查询改写 → 触发器匹配(热) → 实体匹配(温) → 向量+图遍历(冷) → 打分排序
-巩固 = 每日轻量 + 每周深度 + 每月归档
+写入 = 会话摘要 → short-term/ → 同时写入 Hindsight
+巩固 = 每天扫描 short-term/ → 召回≥3次 → 迁移到 long-term/
+衰减 = 14天未召回 → 归档到 summaries/
+检索 = long-term/ → short-term/ → Hindsight recall
 ```
 
-## 三层知识塔
+## 双轴架构
 
 ```
-┌──────────────────────────────────────────────────────┐
-│               LLM 上下文 (2200 chars)                │
-│  ┌────────────────────────────────────────────────┐  │
-│  │ Planner Summary (~300 chars)                    │  │
-│  │ 当前状态蒸馏，全局快照                           │  │
-│  ├────────────────────────────────────────────────┤  │
-│  │ Retrieval Router (~1900 chars)                  │  │
-│  │ 路由规则 + 五阶段配置 + 写入指令                 │  │
-│  └────────────────────────────────────────────────┘  │
-└──────────────────────┬───────────────────────────────┘
-                       │ 命中的记忆文件注入
-┌──────────────────────▼───────────────────────────────┐
-│                                                      │
-│  ┌────────────┐  ┌────────────┐  ┌────────────────┐ │
-│  │ Level 1    │  │ Level 2    │  │ Level 3        │ │
-│  │ 热层 Hot   │  │ 温层 Warm  │  │ 冷层 Cold      │ │
-│  │            │  │            │  │                │ │
-│  │ MEMORY.md  │  │ SQLite     │  │ 全文存储       │ │
-│  │ 路由规则   │  │ .indices.db│  │ FAISS(mmap)    │ │
-│  │ Planner    │  │ 触发器     │  │ 图遍历         │ │
-│  │ Summary    │  │ 实体/图    │  │ 全文搜索       │ │
-│  │            │  │ 摘要/超边  │  │                │ │
-│  │ <10ms      │  │ <100ms     │  │ <500ms         │ │
-│  │ ~50 规则   │  │ 按需查询   │  │ ~70GB          │ │
-│  └────────────┘  └────────────┘  └────────────────┘ │
-│                                                      │
-└──────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    HIMRA v5.0 双轴架构                       │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────────────┐    ┌─────────────────────────────┐│
+│  │     检索轴 (v4.1)    │    │    生命周期轴 (v5 NEW)       ││
+│  │                     │    │                             ││
+│  │  查询               │    │  新信息                      ││
+│  │    ↓                │    │    ↓                        ││
+│  │  规则匹配           │    │  短期记忆                    ││
+│  │    ↓                │    │    ↓ (召回≥3次)             ││
+│  │  实体匹配           │    │  巩固迁移                    ││
+│  │    ↓                │    │    ↓                        ││
+│  │  语义检索(Hindsight)│    │  长期记忆                    ││
+│  │    ↓                │    │    ↓ (14天未召回)            ││
+│  │  图遍历             │    │  衰减归档                    ││
+│  │    ↓                │    │                             ││
+│  │  打分排序           │    │                             ││
+│  └─────────────────────┘    └─────────────────────────────┘│
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## 记忆粒度（四层目录）
+## 与 Hindsight 的分工
 
-```
-memory/
-├── facts/          # 单事实级 — 一个事实一个文件（<1KB）
-├── sessions/       # 对话级 — 保留完整对话弧线（1-10KB）
-├── sources/        # 原始知识 — 论文、仓库、网页全文（10-100KB）
-├── summaries/      # 主题摘要 — 每个主题的蒸馏版（1-5KB）
-├── .indices.db     # SQLite 统一索引（触发器+实体+图+超边+摘要+访问日志）
-├── .embeddings/    # 向量索引（FAISS IVF-PQ mmap）
-│   └── index.faiss
-└── archive/        # 归档（>90天未访问，压缩存储）
-```
+| 职责 | HIMRA | Hindsight |
+|------|-------|-----------|
+| 存储 | 管"记忆放哪个文件夹、属于哪个类别" | 不管存储结构 |
+| 检索 | 管"什么情况下去搜、搜什么" | 管"怎么搜"——语义匹配、相似度排序 |
+| 生命周期 | 管"什么条件从短期升长期、什么条件衰减" | 管"统计这条记忆被召回了几次" |
 
-**加载策略：**
-1. 命中 summary → 只加载 summary（1-5KB）
-2. summary 不够 → 按需加载 source 原文
-3. 命中 fact → 直接加载（<1KB）
-4. 命中 session → 按相关性截取片段
-
-## 六阶段检索流水线
-
-```
-Stage 0: 查询改写 [v4.1 NEW]
-  将用户查询改写为 2-3 个候选表述
-  规则改写（同义词、缩写、中英对照）→ 零成本
-  └── "内存快满了" → ["内存不足", "服务器内存不够", "swap 不够"]
-
-Stage 1: 触发器匹配 [v4 NEW]
-  ├── 描述性触发器：关键词/时间/空间精确匹配
-  ├── 关联性触发器：query embedding vs 预计算 trigger embedding
-  ├── 查询改写后的候选表述分别匹配，取最高分
-  └── 阈值：descriptive=exact, associative>0.70
-
-Stage 2: 实体匹配 [v3 复用]
-  └── entity_index 查找（带类型消歧）
-
-Stage 3: 语义检索 [v3 复用, v4 扩展]
-  ├── 触发条件：Stage 1+2 命中 < 2 个唯一文件
-  ├── 模型：BGE-small (384维, 130MB RAM, mmap)
-  ├── 范围：仅 facts/ + summaries/（高召回价值）
-  └── 阈值：> 0.6
-
-Stage 4: 图遍历 [v3 复用, v4 增强]
-  ├── 触发条件：≥ 1 个文件命中
-  ├── 深度：1-2（memory-max: 宁深勿漏）
-  ├── 路径：cross_links（按关系类型过滤）+ pathways
-  └── 超边：多实体联合查询命中时，召回整个超边的所有节点
-
-Stage 5: 打分排序
-  Score(f) = 0.35·trigger + 0.25·rule + 0.20·entity
-           + 0.12·semantic + 0.08·graph
-  关系类型加权：
-    depends_on: ×1.2 | contradicts: ×0.5 | generalizes: ×1.1
-    exemplifies: ×1.0 | temporally_after: ×0.9
-```
-
-## 写入流水线（同步+异步拆分）
-
-```
-用户输入
-  │
-  ▼
-═══ 同步部分（< 2s，用户可感知）═══
-  │
-  ├── 1. 事实提取 + 分类 (LLM, 1次调用)
-  ├── 2. 实体提取（带消歧）
-  ├── 3. 写入记忆文件（I/O）
-  └── 4. 更新 entity_index (SQLite, <10ms)
-  │
-  ▼ 返回给用户（不阻塞）
-  │
-═══ 异步部分（后台队列）═══
-  │
-  ├── 5. 生成关联性触发器 (LLM batch，攒 10 条一起)
-  ├── 6. 生成 trigger embedding (batch，攒 50 条)
-  ├── 7. 更新 trigger_index + graph_index (SQLite)
-  ├── 8. 检测 cross_links（仅与共享 entity 的已有记忆比较）
-  └── 9. 检查 Planner Summary 是否需要更新
-```
-
-**FAISS 索引重建：每晚 cron（非实时增量）**
-- 5-10 万条向量全量重建约 2-5 分钟
-- 比实时增量更新（每条 50-200ms）更稳定
-
-## 主动巩固（三层增量）
-
-```
-每日轻量巩固（cron，< 10 分钟）：
-  ├── 仅处理本周新增/修改的记忆（< 100 条）
-  ├── 检测新记忆与已有记忆的 cross_links
-  ├── 更新 summaries/ 中引用了新记忆的主题
-  └── Planner Summary 重新蒸馏
-
-每周深度巩固（cron，< 2 小时）：
-  ├── 冗余检测：仅比较同 entity 下的记忆（O(n·k²) 非 O(n²)）
-  ├── 重新生成 top-100 高频记忆的关联性触发器
-  ├── 超边重建
-  └── 实体消歧检查
-
-每月归档（cron）：
-  ├── >90 天未访问 → archive/
-  ├── 压缩 archive/ 目录
-  └── >180 天可配置自动删除（仅保留 summary）
-```
-
-## 资源预算（2核2GB + 70GB 磁盘）
-
-| 资源 | 用量 | 说明 |
-|------|------|------|
-| RAM: BGE-small | 130MB | 向量模型常驻 |
-| RAM: FAISS (mmap) | ~150MB | 仅热页缓存，5-10万条 IVF-PQ |
-| RAM: SQLite | ~10MB | WAL 模式，按需加载 |
-| RAM: FlashRank | ~30MB | 重排序模型 |
-| RAM: 其他 | ~300MB | Python + Hindsight + Hermes |
-| **RAM 总计** | **~620MB** | 2GB 的 31%，安全 |
-| Disk: 记忆文件 | 2GB | 固定配额，超限触发合并/归档 |
-| Disk: SQLite 索引 | 2GB | WAL 模式，定期 VACUUM |
-| Disk: FAISS 向量 | 1GB | mmap 映射，保留重建空间 |
-| Disk: 原始知识缓存 | 50GB | **LRU 淘汰**，硬限制 50GB |
-| Disk: 归档 | 10GB | 压缩存储，>180天可删 |
-| Disk: 系统余量 | 5GB | OS + 日志 + 临时文件 |
-| **Disk 总计** | **70GB** | 完整分配 |
-
-## 实体消歧
-
-同一实体在不同上下文含义不同。entities 字段必须带 type+context：
-
-```yaml
-entities:
-  - name: ECS
-    type: cloud_server        # ← 不是 game_engine
-    context: aliyun           # ← 不是 aws
-```
-
-最小实体类型集：
-`cloud_server` / `system_config` / `memory_size` / `architecture` / `protocol` / `framework` / `paper` / `person` / `tool` / `concept` / `event` / `other`
-
-## 关系类型化
-
-cross_links 不再是裸字符串数组，每条关系带类型：
-
-```yaml
-cross_links:
-  - target: facts/server-ip.md
-    relation: depends_on
-```
-
-5 种关系覆盖 80% 需求：`depends_on` / `contradicts` / `generalizes` / `exemplifies` / `temporally_after`
-
-## 超边（多实体联合查询）
-
-当一个事实同时关联多个实体时，用超边表示：
-
-```sql
--- SQLite hyperedge_index
-INSERT INTO hyperedge_index VALUES (
-  'he_001',
-  '["facts/swap-config.md", "facts/server-ip.md"]',
-  'co_occurrence',
-  0.85
-);
-```
-
-用户同时提到 3 个实体时，超边匹配提供比 pairwise 边更强的信号。
+**一句话：** HIMRA 是大脑结构（新皮层分区），Hindsight 是搜索引擎（海马体的模式完成功能）。
 
 ## 目录结构
 
 ```
-himra/
-├── README.md           # 本文件 — 架构总览
-├── SPEC.md             # 记忆文件格式规范 v4.1
-├── REVIEW.md           # 架构审查报告
-├── memory/             # 记忆文件
-│   ├── facts/
-│   ├── sessions/
-│   ├── sources/
-│   ├── summaries/
-│   ├── archive/
-│   ├── .indices.db     # SQLite 统一索引
-│   └── .embeddings/
-├── scripts/            # 工具脚本
-│   ├── validate_memory.py
-│   ├── init_indices.py
-│   └── consolidation.py
-└── templates/          # 模板文件
-    ├── memory_template.md
-    ├── summary_template.md
-    └── memory_router.md
+~/.hermes/memory/
+├── short-term/                  ← 短期记忆（新）
+│   ├── index.md                 ← 短期记忆索引（含每条的被召回次数）
+│   └── YYYY-MM-DD/              ← 按日期组织的会话摘要
+│       └── session-XXXX.md      ← 单次会话摘要
+├── long-term/                   ← 长期记忆（新）
+│   ├── user-profile.md          ← 用户画像
+│   ├── env-config.md            ← 环境配置
+│   ├── preferences.md           ← 偏好习惯
+│   └── projects/                ← 项目知识
+│       └── <project-name>.md    ← 单个项目知识
+├── facts/                       ← v4.1 原子事实（YAML frontmatter）
+├── sessions/                    ← v4.1 原始会话记录
+├── summaries/                   ← 归档（衰减后的记忆）
+├── .indices.db                  ← SQLite 统一索引
+└── .embeddings/                 ← 向量索引（FAISS）
 ```
+
+## 记忆生命周期
+
+### 写入流程
+
+```
+会话结束
+    ↓
+Hermes 自动生成会话摘要
+    ↓
+写入 short-term/YYYY-MM-DD/session-XXXX.md
+    ↓
+同时写入 Hindsight（bank: hermes-cli）
+    ↓
+更新 short-term/index.md
+```
+
+### 巩固流程（consolidation.py，每天凌晨运行）
+
+```
+扫描 short-term/index.md
+    ↓
+查询 Hindsight 中每条记忆的 retrieval_count 和 last_retrieved
+    ↓
+更新 index.md 中的统计字段
+    ↓
+判断：
+  - retrieval_count ≥ 3 且跨越 ≥ 2 个不同会话 → 迁移到 long-term/
+  - last_retrieved 超过 14 天 → 移入 summaries/
+    ↓
+更新记忆文件的 status 和 promoted_to 字段
+```
+
+### 手动干预
+
+- 用户说"记住这个" → 直接写入 long-term/，标记 manual_override: true
+- 用户说"忘记这个" → 移入 summaries/，标记 user_deleted: true
+
+## MEMORY.md 路由规则
+
+MEMORY.md 精简为路由层（≤800字符）：
+
+```
+# MEMORY.md — HIMRA v5.0 路由规则
+
+## 启动序列（always_load=true, priority=high）
+
+每次会话开始时，必须执行：
+1. 从 long-term/user-profile.md 读取用户名称和 Agent 名称
+2. 从 short-term/ 找到最近一次会话摘要
+3. 输出："你好，[用户名]，我是 [Agent名]，我们继续 [上次会话一句话摘要] 吗？"
+
+## 路由规则
+
+- 用户画像/偏好 → long-term/user-profile.md, preferences.md
+- 环境配置 → long-term/env-config.md
+- 项目知识 → long-term/projects/<name>.md
+- 会话摘要 → short-term/YYYY-MM-DD/session-XXXX.md
+- 原子事实 → facts/*.md
+- 归档记忆 → summaries/*.md
+
+## 检索策略
+
+1. 先查 long-term/（快速匹配）
+2. 再查 short-term/（最近信息）
+3. 最后调 Hindsight recall（语义搜索）
+
+## 巩固规则
+
+- 短期记忆被召回 ≥3 次 → 自动迁移到长期记忆
+- 超过 14 天未召回 → 归档到 summaries/
+- 用户说"记住这个" → 直接写入长期记忆
+```
+
+## 巩固条件
+
+| 条件 | 动作 | 说明 |
+|------|------|------|
+| 召回 ≥ 3 次，跨越 ≥ 2 个会话 | 迁移到 long-term/ | 被验证有用 |
+| 14 天未被召回 | 归档到 summaries/ | 自然衰减 |
+| 用户说"记住这个" | 直接写入 long-term/ | 手动干预 |
+| 用户说"忘记这个" | 移入 summaries/ | 手动删除 |
+
+## 评估指标
+
+| 指标 | 目标 | 测量方法 |
+|------|------|----------|
+| 巩固准确率 | ≥ 80% | 升级到长期记忆的信息中，被后续使用的比例 |
+| 遗忘合理率 | ≥ 90% | 归档的信息中，确实不再需要的比例 |
+| 检索延迟 | < 100ms | 从查询到返回结果的时间 |
+| 路由命中率 | ≥ 85% | 路由规则正确分类的比例 |
+
+## 版本历史
+
+| 版本 | 日期 | 变更 |
+|------|------|------|
+| v5.0.0 | 2026-06-19 | 新增短期/长期记忆架构，巩固机制，可见性接口 |
+| v4.1.0 | 2026-06-19 | 三层知识塔，六阶段检索，SQLite索引 |
+| v4.0.0 | 2026-06-19 | T-Mem + ActiveMem 融合 |
+| v3.0.0 | 2026-06-18 | 五组件+四阶段流水线 |
+| v1.0.0 | 2026-06-18 | 纯规则路由 |
