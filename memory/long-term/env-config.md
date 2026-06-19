@@ -4,7 +4,7 @@ type: long-term
 category: environment
 created: 2026-06-19T18:55:00+08:00
 updated: 2026-06-19T18:55:00+08:00
-source: promoted
+source: manual
 manual_override: false
 ---
 

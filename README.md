@@ -132,7 +132,7 @@ Hermes 自动生成会话摘要
 
 ## MEMORY.md 路由规则
 
-MEMORY.md 精简为路由层（≤800字符）：
+MEMORY.md 精简为路由层（≤1200字符）：
 
 ```
 # MEMORY.md — HIMRA v5.0 路由规则
