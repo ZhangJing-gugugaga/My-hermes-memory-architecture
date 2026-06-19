@@ -57,25 +57,40 @@ v5: MEMORY.md 是路由规则 + 记忆生命周期管理（短期→巩固→长
 
 **一句话：** HIMRA 是大脑结构（新皮层分区），Hindsight 是搜索引擎（海马体的模式完成功能）。
 
+## 存储位置规范（D 盘优先）
+
+**核心原则：所有持续增长、占用大量存储空间的数据必须存储在 D 盘。**
+
+| 数据类型 | D 盘路径 | 说明 |
+|----------|----------|------|
+| HIMRA 记忆 | `D:\HIMRA\memory\` | 短期/长期/归档 |
+| Hindsight 数据 | `D:\hindsight\` | 已在 D 盘 |
+| Obsidian 知识库 | `D:\Obsidian Vault\` | 已在 D 盘 |
+| 备份文件 | `D:\backups\` | 定时备份产出 |
+| 日志文件 | `D:\HIMRA\logs\` | 长期累积 |
+
 ## 目录结构
 
 ```
-~/.hermes/memory/
-├── short-term/                  ← 短期记忆（新）
-│   ├── index.md                 ← 短期记忆索引（含每条的被召回次数）
-│   └── YYYY-MM-DD/              ← 按日期组织的会话摘要
-│       └── session-XXXX.md      ← 单次会话摘要
-├── long-term/                   ← 长期记忆（新）
-│   ├── user-profile.md          ← 用户画像
-│   ├── env-config.md            ← 环境配置
-│   ├── preferences.md           ← 偏好习惯
-│   └── projects/                ← 项目知识
-│       └── <project-name>.md    ← 单个项目知识
-├── facts/                       ← v4.1 原子事实（YAML frontmatter）
-├── sessions/                    ← v4.1 原始会话记录
-├── summaries/                   ← 归档（衰减后的记忆）
-├── .indices.db                  ← SQLite 统一索引
-└── .embeddings/                 ← 向量索引（FAISS）
+D:\HIMRA\                              ← HIMRA 数据根目录
+├── memory\                            ← 记忆系统
+│   ├── short-term\                    ← 短期记忆
+│   │   ├── index.md                   ← 短期记忆索引
+│   │   └── YYYY-MM-DD\               ← 按日期组织
+│   │       └── session-XXXX.md        ← 单次会话摘要
+│   ├── long-term\                     ← 长期记忆
+│   │   ├── user-profile.md            ← 用户画像
+│   │   ├── env-config.md              ← 环境配置
+│   │   ├── preferences.md             ← 偏好习惯
+│   │   └── projects\                  ← 项目知识
+│   ├── facts\                         ← v4.1 原子事实
+│   ├── sessions\                      ← v4.1 原始会话记录
+│   ├── summaries\                     ← 归档
+│   ├── .indices.db                    ← SQLite 统一索引
+│   └── .embeddings\                   ← 向量索引（FAISS）
+├── sessions\                          ← Hermes 会话日志
+├── logs\                              ← 长期日志
+└── backups\                           ← 备份文件
 ```
 
 ## 记忆生命周期
@@ -87,17 +102,17 @@ v5: MEMORY.md 是路由规则 + 记忆生命周期管理（短期→巩固→长
     ↓
 Hermes 自动生成会话摘要
     ↓
-写入 short-term/YYYY-MM-DD/session-XXXX.md
+写入 D:\HIMRA\memory\short-term\YYYY-MM-DD\session-XXXX.md
     ↓
 同时写入 Hindsight（bank: hermes-cli）
     ↓
-更新 short-term/index.md
+更新 D:\HIMRA\memory\short-term\index.md
 ```
 
 ### 巩固流程（consolidation.py，每天凌晨运行）
 
 ```
-扫描 short-term/index.md
+扫描 D:\HIMRA\memory\short-term\index.md
     ↓
 查询 Hindsight 中每条记忆的 retrieval_count 和 last_retrieved
     ↓
@@ -149,6 +164,12 @@ MEMORY.md 精简为路由层（≤800字符）：
 - 短期记忆被召回 ≥3 次 → 自动迁移到长期记忆
 - 超过 14 天未召回 → 归档到 summaries/
 - 用户说"记住这个" → 直接写入长期记忆
+
+## 存储规则
+
+- 所有记忆数据存储在 D:\HIMRA\memory\
+- C 盘只存放程序代码和临时文件
+- 备份文件存储在 D:\backups\
 ```
 
 ## 巩固条件
@@ -173,7 +194,7 @@ MEMORY.md 精简为路由层（≤800字符）：
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
-| v5.0.0 | 2026-06-19 | 新增短期/长期记忆架构，巩固机制，可见性接口 |
+| v5.0.0 | 2026-06-19 | 新增短期/长期记忆架构，巩固机制，可见性接口，D盘存储规范 |
 | v4.1.0 | 2026-06-19 | 三层知识塔，六阶段检索，SQLite索引 |
 | v4.0.0 | 2026-06-19 | T-Mem + ActiveMem 融合 |
 | v3.0.0 | 2026-06-18 | 五组件+四阶段流水线 |
