@@ -1,46 +1,64 @@
-# MEMORY.md — HIMRA v5.0 路由规则
+# MEMORY.md — HIMRA v5.1 记忆路由
 
-## 启动序列（always_load=true, priority=high）
+## 会话必读
+1. 读取 D:\HIMRA\rules.md（行为章程，每次必读）
+2. 检测 Hindsight：curl -s http://localhost:9177/health
 
-每次会话开始时，必须执行：
-1. 从 long-term/user-profile.md 读取用户名称和 Agent 名称
-2. 从 short-term/ 找到最近一次会话摘要
-3. 输出："你好，[用户名]，我是 [Agent名]，我们继续 [上次会话一句话摘要] 吗？"
+## 记忆分流规则
 
-## 路由规则
+### 日常检索 → Hindsight
+所有常规对话的上下文回忆走 Hindsight auto_recall（静默）。
 
-- 用户画像/偏好 → long-term/user-profile.md, preferences.md
-- 环境配置 → long-term/env-config.md
-- 项目知识 → long-term/projects/<name>.md
-- 会话摘要 → short-term/YYYY-MM-DD/session-XXXX.md
-- 原子事实 → facts/*.md
-- 归档记忆 → summaries/*.md
+### 会话回忆 → HIMRA
+仅当用户明确表达以下意图时，搜索 D:\HIMRA\sessions\ 目录：
+- 触发词："回忆"、"之前聊过"、"上次说的"、"帮我找之前的对话"
+- 触发词："查会话记录"、"我们讨论过"、"翻一下之前"
+- 触发词："你记不记得上次"、"之前有个"
+- 判断标准：用户想找的是"哪次对话"而非"某个事实"
 
-## 检索策略
+### 会话保存（双写）
+退出时摘要同时存入：
+1. D:\HIMRA\sessions\YYYY-MM-DD\session-XXX.md（HIMRA 存档）
+2. Hindsight（bank: hermes-cli）
 
-1. 先查 long-term/（快速匹配）
-2. 再查 short-term/（最近信息）
-3. 最后调 Hindsight recall（语义搜索）
+### Hindsight 不可用时的回退
+走完整 HIMRA 管线：long-term/ → short-term/ → facts/ → summaries/
 
-## 检索后回写规则
+---
 
-当 Hermes 检索时使用了一条短期记忆（无论是走 HIMRA 路由命中还是 Hindsight 语义召回），必须执行：
+# rules.md — HIMRA v5.1 行为章程
 
-1. 打开对应的 short-term/YYYY-MM-DD/session-XXXX.md
-2. 将 retrieval_count 字段值 +1
-3. 将 last_retrieved 字段更新为当前时间戳（ISO 8601）
-4. 同步更新 short-term/index.md 中对应行的召回次数和最后召回时间
+## 启动序列（强制首句）
 
-此规则确保 consolidation.py 能正确判断哪些短期记忆应升级为长期记忆。
+用户发送第一条消息后，你的第一句回复必须是：
+1. 读取本文件下方的 Agent 名称和用户姓名
+2. 从 sessions/ 找到最近一次会话摘要文件
+3. 输出："你好，[用户名]，我是 [Agent名]，我们继续 [会话摘要原文] 吗？"
 
-## 巩固规则
+此问候语是强制首句，不得跳过。会话摘要必须引用原文，不得改写。
 
-- 短期记忆被召回 ≥3 次 → 自动迁移到长期记忆
-- 超过 14 天未召回 → 归档到 summaries/
-- 用户说"记住这个" → 直接写入长期记忆
+## 基本身份
 
-## 存储规则
+- 用户姓名：[填写]
+- Agent 名称：[填写]
+- 命名时间：[填写]
+- 命名来源：[填写]
 
-- 所有记忆数据存储在 D:\HIMRA\memory\
-- C 盘只存放程序代码和临时文件
-- 备份文件存储在 D:\backups\
+## 用户画像
+
+[填写用户画像：技术水平、表达风格、脾气特征、核心诉求]
+
+## 行为约束规则
+
+[填写行为约束：禁止瞎猜、任务失败上限、Skills规则、沟通规范等]
+
+## 关键边界
+
+[填写关键边界：服务器不存本机配置等]
+
+## 退出保存规则
+当用户说"bye"、"拜拜"、"退出"、"走了"、"保存并退出"时：
+1. 生成本次会话一句话摘要
+2. 写入 sessions/YYYY-MM-DD/session-XXX.md
+3. 写入 Hindsight
+4. 回复"已保存，下次见。"

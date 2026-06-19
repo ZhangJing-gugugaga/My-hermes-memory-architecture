@@ -1,7 +1,7 @@
-# HIMRA v5.0 Specification — "Human Memory"
+# HIMRA v5.1 Specification — "Dual Mode"
 
-**Version:** 5.0.0
-**Branch:** v5-human-memory
+**Version:** 5.1.0
+**Branch:** v5.1
 **Date:** 2026-06-19
 **Author:** Zhang Jing
 
@@ -56,3 +56,13 @@ HIMRA v5.0 在 v4.1 的检索架构之上，新增了一个完整的平行子系
 4. 同步更新 `short-term/index.md` 中对应行的召回次数和最后召回时间
 
 **理由：** Hindsight API 目前不暴露检索统计字段，与其等它支持，不如让 Hermes 在检索时就地更新。这符合 HIMRA v5.0 的分工原则——HIMRA 管生命周期，Hindsight 只管语义匹配。
+
+### v5.1 新增：session 类型
+
+| type | 目录 | 用途 | 说明 |
+|------|------|------|------|
+| `session` | sessions/ | 会话存档 | 用户说"拜拜"时写入，供显式"回忆"检索 |
+
+**session 类型 YAML frontmatter：**
+- 必填：name, type, created, summary
+- 可选：tags, source_session, related_files
